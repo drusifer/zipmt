@@ -9,7 +9,7 @@ GLIB_LIBS = -L${GLIB_HOME}/lib  \
               ${GLIB_HOME}/lib/libgobject-2.0.a  \
               ${GLIB_HOME}/lib/libglib-2.0.a \
 
-CFLAGS = -g -Wall -O3 -D_FILE_OFFSET_BITS=64
+CFLAGS = -g -O3 -Wall -D_FILE_OFFSET_BITS=64
 
 BZ2_INCS = -I/usr/include
 
@@ -23,3 +23,5 @@ zipmt.o: zipmt.c
 zipmt: zipmt.o
 	gcc -o zipmt zipmt.o ${GLIB_LIBS} ${BZ2_LIBS} -lpthread -lrt
 
+clean:
+	/bin/rm -f zipmt zipmt.o
