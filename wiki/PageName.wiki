@@ -13,11 +13,11 @@ Although Stream mode has more overhead they both run in the same amount of time 
 
 == Usage ==
 
-
-  zipmt [OPTION...] <file> - muti threaded bzip2 compression utility
+{{{
+  zipmt [OPTION...] <file> - muti-threaded bzip2 compression utility
 
   <file> - The name of the file to compress or just use "-" to indicate 
-        stdandard input.
+        standard input.
 
 Help Options:
   -?, --help        Show help options
@@ -28,3 +28,4 @@ Application Options:
   -o, --outfile     The name of an output file to write to
   -c, --stdout      Write data to standard out
   -s, --stream      Compress using the stream method
+}}}
