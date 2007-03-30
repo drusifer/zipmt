@@ -9,6 +9,8 @@
 #include <time.h>
 
 #include <bzlib.h>
+#include <zlib.h>
+
 #include <glib.h>
 
 
@@ -30,7 +32,7 @@ typedef struct file_part {
   gulong   inBufz; /* number of bytes read in */
   gchar    outBuf[WRITEBUFZ]; /* compressed data gets put here */
   gulong   outBufz; /* number of bytes of compressed data */
-  int      bzerror; /* error from bzip */
+  gboolean error; /* error from zip */
 } file_part_t;
 
 
@@ -155,25 +157,81 @@ void file_read_func(gpointer data, gpointer user_data) {
   g_atomic_int_set(&(tp_arg->done), TRUE);
 }
 
+void file_read_func_zlib(gpointer data, gpointer user_data) {
+  tp_args_t* tp_arg = (tp_args_t*) data;
+  gchar buf[READBUFZ];
+  size_t nread=0, currPos=tp_arg->startPos, readSz=READBUFZ;
+  FILE* fd = fopen(tp_arg->filen, "r");
+  gint    processed = 0, written = 0;
+  gzFile zfd = gzopen(tp_arg->tmpFilen, "wb9");
+
+  if (!fd) {
+    /* handle error */
+    perror("couln't open input file");
+    g_atomic_int_set(&(tp_arg->error), TRUE);
+    return;
+  }
+
+  if (!zfd) {
+    /* handle error */
+    perror("couln't open tempfile");
+    g_atomic_int_set(&(tp_arg->error), TRUE);
+    return;
+  }
+  
+
+  fseek(fd, tp_arg->startPos, SEEK_SET);
+  while (currPos < tp_arg->endPos && !feof(fd)) {
+    /* Read a chunk */
+    if (currPos + readSz > tp_arg->endPos)
+      readSz = tp_arg->endPos - currPos;
+    nread = fread(&(buf[0]), 1, readSz, fd);
+    currPos += nread;
+
+    if (tp_arg->verbose) {
+      processed = (currPos - tp_arg->startPos)/(double)(tp_arg->endPos - tp_arg->startPos) * 100;
+      g_atomic_int_set(&(tp_arg->processed), processed);
+    }
+    
+    /* zip and write the chunk */
+    written = gzwrite(zfd, &(buf[0]), nread);
+    if (written != nread) { 
+      /* handle error */
+      fprintf(stderr, "Zlib Error.  Supposed to write %d bytes but only wrote %d\n", nread, written);
+      g_atomic_int_set(&(tp_arg->error), TRUE);
+      break;
+    }
+  }
+
+  /* clean up*/
+  fclose(fd);
+
+  gzclose(zfd);
+
+  g_atomic_int_set(&(tp_arg->done), TRUE);
+}
+
 void stream_read_func(gpointer data, gpointer user_data) {
   file_part_t *part = (file_part_t*) data;
   
   bz_stream bzs;
   memset(&bzs, 0, sizeof(bz_stream));
+  int bzerror = BZ_OK;
 
-  part->bzerror = BZ2_bzCompressInit(&bzs, 9, 0, 0);
+  bzerror = BZ2_bzCompressInit(&bzs, 9, 0, 0);
   
-  if (part->bzerror == BZ_OK) {
+  if (bzerror == BZ_OK) {
     bzs.next_in = part->inBuf;
     bzs.avail_in = part->inBufz;
     bzs.next_out = part->outBuf;
     bzs.avail_out = part->outBufz;
-    part->bzerror = BZ2_bzCompress(&bzs, BZ_FINISH);
+    bzerror = BZ2_bzCompress(&bzs, BZ_FINISH);
     part->outBufz = bzs.total_out_lo32;
   }
 
-  if (part->bzerror != BZ_STREAM_END) {
-    fprintf(stderr, "BZError %d\n", part->bzerror);
+  if (bzerror != BZ_STREAM_END) {
+    part->error = TRUE;
+    fprintf(stderr, "BZError %d\n", bzerror);
   }
 
   BZ2_bzCompressEnd(&bzs);
@@ -184,15 +242,18 @@ void stream_read_func(gpointer data, gpointer user_data) {
   g_mutex_unlock(PART_LIST_LOCK);
 }
 
-void stream_driver(gboolean verbose, gint nthreads, FILE* infd, FILE* outfd) {
+
+void stream_driver(gboolean verbose, gint nthreads, 
+                   FILE* infd, FILE* outfd) {
   gulong bufz = 0, pushed = 0, alloced=0;
-  off_t partNum = 0, currPart = 0;
+  off_t partNum = 0, currPart = 0, totalBytes;
   PART_LIST_LOCK = g_mutex_new();
   file_part_t *part = NULL;
+  GThreadPool *tp = NULL;
+  
+  tp = g_thread_pool_new(stream_read_func, NULL, nthreads, TRUE, NULL);
   
   
-  GThreadPool *tp = 
-    g_thread_pool_new(stream_read_func, NULL, nthreads, TRUE, NULL);
   
   while (!feof(infd)) {
     /* limit the number of jobs pushed to the thread pool a resonable number
@@ -208,7 +269,7 @@ void stream_driver(gboolean verbose, gint nthreads, FILE* infd, FILE* outfd) {
       part->partNumber = partNum;
       partNum++;
       part->outBufz = WRITEBUFZ;
-      part->bzerror = BZ_OK;
+      part->error = FALSE;
       
       /* push file_parts into the thread pool for compression */
       g_thread_pool_push(tp, part, NULL);
@@ -222,7 +283,7 @@ void stream_driver(gboolean verbose, gint nthreads, FILE* infd, FILE* outfd) {
     g_mutex_lock(PART_LIST_LOCK);
     if (PART_LIST != NULL) {
       part = (file_part_t*) PART_LIST->data;
-      if (part->bzerror == BZ_STREAM_END) {
+      if (part->error == FALSE) {
         if (part->partNumber == currPart) {
           /* remove the head */
           PART_LIST = g_slist_delete_link(PART_LIST, PART_LIST);
@@ -255,6 +316,7 @@ void stream_driver(gboolean verbose, gint nthreads, FILE* infd, FILE* outfd) {
         perror("Error: ");
         exit(1);
       }
+      totalBytes+=bufz;
       g_slice_free(file_part_t, part);
       alloced--;
       part = NULL;
@@ -267,7 +329,7 @@ void stream_driver(gboolean verbose, gint nthreads, FILE* infd, FILE* outfd) {
   /* drain the rest of the queue */
   while (PART_LIST != NULL) {
     part = (file_part_t*) PART_LIST->data;
-    if (part->bzerror == BZ_STREAM_END) {
+    if (part->error == FALSE) {
       if (part->partNumber == currPart) {
         /* remove the head */
         PART_LIST = g_slist_delete_link(PART_LIST, PART_LIST);
@@ -282,6 +344,7 @@ void stream_driver(gboolean verbose, gint nthreads, FILE* infd, FILE* outfd) {
           perror("Error:");
           exit(1);
         }
+        totalBytes+=bufz;
         g_slice_free(file_part_t, part);
         alloced--;
       } else {
@@ -305,7 +368,6 @@ void stream_driver(gboolean verbose, gint nthreads, FILE* infd, FILE* outfd) {
     fprintf(stderr, "\n");
   }
 
-
   g_mutex_free(PART_LIST_LOCK);
 }
 
@@ -313,6 +375,7 @@ void stream_driver(gboolean verbose, gint nthreads, FILE* infd, FILE* outfd) {
 int main(int argc, char** argv) {
   gchar outFile[1024];
   gchar readBuf[READBUFZ];
+  gchar* extension = "bz2";
   struct stat statBuf;
   off_t fileSize = 0;
   off_t partSize = 0;
@@ -331,6 +394,7 @@ int main(int argc, char** argv) {
   gboolean verbose = FALSE;
   gboolean useStdout = FALSE;
   gboolean useStream = FALSE;
+  gboolean useGzip = FALSE;
   gchar* outFileArg = NULL;
 
   /* Initialize gthreads */
@@ -348,6 +412,8 @@ int main(int argc, char** argv) {
       "Write data to standard out", NULL },
     { "stream", 's', 0, G_OPTION_ARG_NONE, &useStream,
        "Compress using the stream method", NULL },
+    { "zip", 'z', 0, G_OPTION_ARG_NONE, &useGzip,
+       "Compress using the gzip algorithm", NULL },
     { NULL }
   };
   
@@ -374,6 +440,9 @@ int main(int argc, char** argv) {
     fprintf(stderr, "You Must specify a <filename> arg\n");
     exit(1);
   }
+
+  if (useGzip)
+    extension = "gz";
 
   if (useStdout && outFileArg) {
     fprintf(stderr, "You can not specify -c and -o together\n");
@@ -405,7 +474,7 @@ int main(int argc, char** argv) {
   if (!useStdout) {
     if (outFileArg == NULL) {
       if (strcmp(filen, "-") != 0) {
-        g_snprintf(&(outFile[0]), 1024, "%s.bz2", filen);
+        g_snprintf(&(outFile[0]), 1024, "%s.%s", filen, extension);
       } else {
         fprintf(stderr, "You must supply an output file argument (-o) if you are reading from stdin, or use -c to write to stdout (but don't forget to redirect the output!)\n");
         exit(1);
@@ -416,6 +485,10 @@ int main(int argc, char** argv) {
   }
   
   if (useStream) {
+    if (useGzip) {
+      fprintf(stderr, "Error you can not use gzip compression in stream mode\n");
+      exit(1);
+    }
     /* Open the input file for streaming */
     if (strcmp(filen, "-") == 0) {
       infile = stdin;
@@ -441,16 +514,16 @@ int main(int argc, char** argv) {
     /* use the stream method to compress the file */
     stream_driver(verbose, nthreads, infile, outfile);
 
+    if (!useStdout) {
+      fclose(outfile);
+    }
 
     if (strcmp(filen, "-") != 0) {
       fclose(infile);
-
+      
       if (!useStdout)
         remove(filen);
     }
-      
-    if (outFileArg) 
-      fclose(outfile);
   } else  {
     /* use the split method */
 
@@ -464,7 +537,10 @@ int main(int argc, char** argv) {
     /* fprintf(stderr, "inputfile: %s.  Size=%lld partSize=%lld\n",
        filen, fileSize, partSize);
     */
-    tp = g_thread_pool_new(file_read_func, NULL, nthreads, TRUE, NULL);
+    if (useGzip)
+      tp = g_thread_pool_new(file_read_func_zlib, NULL, nthreads, TRUE, NULL);
+    else
+      tp = g_thread_pool_new(file_read_func, NULL, nthreads, TRUE, NULL);
     
     for (i = 0; i < nthreads; i++) {
       /* set up each threads piece of the file */
