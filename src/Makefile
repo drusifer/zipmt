@@ -1,4 +1,4 @@
-GLIB_HOME = /home/gutstd/localL/garnome-2.16.0
+GLIB_HOME = /usr
 
 GLIB_INCS = -I${GLIB_HOME}/include/glib-2.0 \
             -I${GLIB_HOME}/lib/glib-2.0/include
