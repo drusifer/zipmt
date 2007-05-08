@@ -37,3 +37,10 @@ Application Options:
   -c, --stdout      Write data to standard out
   -s, --stream      Compress using the stream method
 }}}
+
+
+=== Example ===
+To use in a pipeline with tar:
+{{{
+  tar cf - files* | zipmt -s -c - > files.tar.bz2
+}}}
