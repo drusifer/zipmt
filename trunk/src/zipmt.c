@@ -423,6 +423,7 @@ int main(int argc, char** argv) {
   context = g_option_context_new ("<file> - muti threaded bzip2 compression utility\n\n  <file> - The name of the file to compress or just use \"-\" to indicate \n\tstdandard input.");
   g_option_context_add_main_entries(context, entries, NULL);
   g_option_context_parse(context, &argc, &argv, &error);
+  g_option_context_free(context);
   if (error != NULL) {
     fprintf(stderr, "Error parsing arguments: %s\n", error->message);
     exit(1);
