@@ -429,7 +429,7 @@ int main(int argc, char** argv) {
     exit(1);
   }
 
-  if (nthreads < 0) {
+  if (nthreads <= 0) {
     fprintf(stderr, "Invalid value for -t \"%d\". Must be greater than 0.\n", nthreads);
     exit(1);
   }
