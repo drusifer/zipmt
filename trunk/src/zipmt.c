@@ -1,3 +1,17 @@
+#ident "$Id: head.c,v 1.2 2002/02/15 22:58:38 td Exp $"
+/*----------------------------------------------------------------------*\
+ * Module:		$RCSfile: head.c,v $
+ * Version:		$Revision: 1.2 $
+ * Date Last Changed:	$Date: 2002/02/15 22:58:38 $
+ * Author:		drusifer
+ *----------------------------------------------------------------------*
+ * System:              _
+ * Subsystem:           _
+ *----------------------------------------------------------------------*
+ * $Source: /data/cvs/stub/head.c,v $
+ * $Log: head.c,v $
+\*----------------------------------------------------------------------*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/types.h>
@@ -7,6 +21,7 @@
 #include <string.h>
 #include <errno.h>
 #include <time.h>
+#include <signal.h>
 
 #include <bzlib.h>
 #include <zlib.h>
@@ -17,6 +32,15 @@
 #define NTHREADS 4
 #define READBUFZ 100000 * 9 * 2
 #define WRITEBUFZ READBUFZ + 1024
+
+/* _recieved_SIGINT is set to true if SIGINT is recieved.  This allows the 
+   program to exit cleanly if it is interupped via Cntrl-C
+*/
+sig_atomic_t _recieved_SIGINT = FALSE;
+
+void _sig_handler( int signal_number ) {
+  _recieved_SIGINT = TRUE;
+}
 
 /*  For stream mode
    The file part is used pass information between the main thread and the 
@@ -122,7 +146,7 @@ void file_read_func(gpointer data, gpointer user_data) {
   }
  
   fseek(fd, tp_arg->startPos, SEEK_SET);
-  while (currPos < tp_arg->endPos && !feof(fd)) {
+  while (currPos < tp_arg->endPos && !feof(fd) && !_recieved_SIGINT) {
     if (currPos + readSz > tp_arg->endPos)
       readSz = tp_arg->endPos - currPos;
     nread = fread(&(buf[0]), 1, readSz, fd);
@@ -181,7 +205,7 @@ void file_read_func_zlib(gpointer data, gpointer user_data) {
   
 
   fseek(fd, tp_arg->startPos, SEEK_SET);
-  while (currPos < tp_arg->endPos && !feof(fd)) {
+  while (currPos < tp_arg->endPos && !feof(fd) && !_recieved_SIGINT) {
     /* Read a chunk */
     if (currPos + readSz > tp_arg->endPos)
       readSz = tp_arg->endPos - currPos;
@@ -255,7 +279,7 @@ void stream_driver(gboolean verbose, gint nthreads,
   
   
   
-  while (!feof(infd)) {
+  while (!feof(infd) && !_recieved_SIGINT) {
     /* limit the number of jobs pushed to the thread pool a resonable number
        since the reader is going to be much faster then the other threads 
        anyway.
@@ -399,6 +423,12 @@ int main(int argc, char** argv) {
 
   /* Initialize gthreads */
   g_thread_init(NULL);
+
+  /* register the signal handler */
+  struct sigaction sa;
+  memset(&sa, 0, sizeof(sa));
+  sa.sa_handler = &_sig_handler;
+  sigaction(SIGINT, &sa, NULL);
   
   startTime = time(NULL);
   GOptionEntry entries[] = {
@@ -517,13 +547,17 @@ int main(int argc, char** argv) {
 
     if (!useStdout) {
       fclose(outfile);
+      if (_recieved_SIGINT) {
+        remove(outFile);
+      }
     }
 
     if (strcmp(filen, "-") != 0) {
       fclose(infile);
       
-      if (!useStdout)
+      if (!useStdout && !_recieved_SIGINT) {
         remove(filen);
+      }
     }
   } else  {
     /* use the split method */
@@ -631,13 +665,19 @@ int main(int argc, char** argv) {
       remove(tp_args[i].tmpFilen);
     }
     
-    if (!useStdout)
+    if (!useStdout) {
       close(outFd);
+      if (_recieved_SIGINT) {
+        remove(outFile);
+      }
+    }
     
     g_free(tp_args);
     
     if (!useStdout)
-      remove(filen);
+      if (!_recieved_SIGINT) {
+        remove(filen);
+      }
   }
   
   if (verbose) {
