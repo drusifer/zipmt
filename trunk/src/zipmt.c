@@ -242,7 +242,7 @@ void stream_read_func(gpointer data, gpointer user_data) {
   memset(&bzs, 0, sizeof(bz_stream));
   int bzerror = BZ_OK;
 
-  bzerror = BZ2_bzCompressInit(&bzs, 9, 0, 0);
+  bzerror = BZ2_bzCompressInit(&bzs, 9, 0, 30);
   
   if (bzerror == BZ_OK) {
     bzs.next_in = part->inBuf;
@@ -266,6 +266,95 @@ void stream_read_func(gpointer data, gpointer user_data) {
   g_mutex_unlock(PART_LIST_LOCK);
 }
 
+void omp_driver(gboolean verbose, gint nthreads, FILE* infd, FILE* outfd ) {
+  gint batch_size = nthreads;
+  int i = 0;
+  gboolean error = FALSE;
+  file_part_t *parts = g_new0(file_part_t, batch_size);
+  int partNum = 0;
+  off_t total_read = 0;
+  off_t total_written = 0;
+  
+  while (!feof(infd) && !_recieved_SIGINT) {
+    /* read a batch of data from the file */
+    for (i = 0; i < batch_size; i++) {
+      file_part_t *part = &(parts)[i];
+      /* read data from standard in into chunks */
+      part->inBufz = fread(part->inBuf, 1, READBUFZ, infd);
+      part->partNumber = partNum++;
+      part->outBufz = 0;
+      part->error = FALSE;
+      total_read += part->inBufz;
+    }
+    
+    /* compress the data using bzip */
+#pragma omp parallel for reduction(|:error) num_threads(nthreads)
+    for( i = 0; i < batch_size; i++) {
+      file_part_t *part = &(parts)[i];
+
+      if( part->inBufz == 0) {
+        continue; /* nothing in this batch (probably the end?) */
+      }
+      
+      bz_stream bzs;
+      memset(&bzs, 0, sizeof(bz_stream));
+      int bzerror = BZ_OK;
+      
+      bzerror = BZ2_bzCompressInit(&bzs, 9, 0, 30);
+      
+      if (bzerror == BZ_OK) {
+        bzs.next_in = part->inBuf;
+        bzs.avail_in = part->inBufz;
+        bzs.next_out = part->outBuf;
+        bzs.avail_out = WRITEBUFZ;
+        bzerror = BZ2_bzCompress(&bzs, BZ_FINISH);
+        part->outBufz = bzs.total_out_lo32;
+      }
+
+      if (bzerror != BZ_STREAM_END) {
+        part->error = TRUE;
+        error = TRUE;
+        fprintf(stderr, "BZError %d\n", bzerror);
+      }
+      
+      BZ2_bzCompressEnd(&bzs);
+    } /* end of parallel for */
+
+    if(error)  {
+      exit(1); /* bzip error */
+    }
+    
+    
+    /* output the resulting data */
+    for( i = 0; i < batch_size; i++ ) {
+      file_part_t *part = &(parts)[i];
+      if( part->inBufz == 0) {
+        continue; /* nothing in this batch (probably the end?) */
+      }
+
+      gulong bufz = 0; 
+      bufz = fwrite(part->outBuf, 1, part->outBufz, outfd);
+      total_written += part->outBufz;
+
+      if( verbose ) {
+        fprintf(stderr, "\rI: %8.2fM, O: %8.2fM, parts: %4lld", 
+                total_read/(1024*1024.0), total_written/(1024*1024.0), 
+                part->partNumber);
+      }
+
+      if (bufz != part->outBufz) {
+        /* Error */
+        fprintf(stderr, "Tried to write %ld bytes to but only wrote %ld\n",
+                part->outBufz, bufz);
+        perror("Error:");
+        exit(1);
+      }
+    }
+  } /* end while */
+  if( verbose ) {
+    fprintf(stderr, "\n");
+  }
+};
 
 void stream_driver(gboolean verbose, gint nthreads, 
                    FILE* infd, FILE* outfd) {
@@ -417,7 +506,9 @@ int main(int argc, char** argv) {
   gint  nthreads = NTHREADS;
   gboolean verbose = FALSE;
   gboolean useStdout = FALSE;
+  gboolean keepFile = FALSE;
   gboolean useStream = FALSE;
+  gboolean useOMP = FALSE;
   gboolean useGzip = FALSE;
   gchar* outFileArg = NULL;
 
@@ -442,8 +533,12 @@ int main(int argc, char** argv) {
       "Write data to standard out", NULL },
     { "stream", 's', 0, G_OPTION_ARG_NONE, &useStream,
        "Compress using the stream method", NULL },
+    { "omp", 'm', 0, G_OPTION_ARG_NONE, &useOMP,
+       "Compress using the openMP method", NULL },
     { "zip", 'z', 0, G_OPTION_ARG_NONE, &useGzip,
        "Compress using the gzip algorithm", NULL },
+    { "keep", 'k', 0, G_OPTION_ARG_NONE, &keepFile,
+       "Do not delete the input file when done", NULL },
     { NULL }
   };
   
@@ -542,8 +637,19 @@ int main(int argc, char** argv) {
       }
     }
 
-    /* use the stream method to compress the file */
-    stream_driver(verbose, nthreads, infile, outfile);
+    if(useOMP) {
+#ifndef _OPENMP
+      fprintf(stderr, "Sorry OpenMP is not available\n");
+#else
+      if (verbose) {
+        fprintf(stderr, "Using OpenMP :)\n");
+      }
+#endif
+      omp_driver(verbose, nthreads,infile, outfile);
+    } else {
+      /* use the stream method to compress the file */
+      stream_driver(verbose, nthreads, infile, outfile);
+    }
 
     if (!useStdout) {
       fclose(outfile);
@@ -555,7 +661,7 @@ int main(int argc, char** argv) {
     if (strcmp(filen, "-") != 0) {
       fclose(infile);
       
-      if (!useStdout && !_recieved_SIGINT) {
+      if (!keepFile && !useStdout && !_recieved_SIGINT) {
         remove(filen);
       }
     }
@@ -674,10 +780,9 @@ int main(int argc, char** argv) {
     
     g_free(tp_args);
     
-    if (!useStdout)
-      if (!_recieved_SIGINT) {
-        remove(filen);
-      }
+    if( !keepFile && !useStdout && !_recieved_SIGINT) {
+      remove(filen);
+    }
   }
   
   if (verbose) {
