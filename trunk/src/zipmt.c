@@ -31,7 +31,7 @@
 
 #define NTHREADS 4
 #define READBUFZ 100000 * 9 * 2
-#define WRITEBUFZ READBUFZ + 1024
+#define WRITEBUFZ READBUFZ + 9216
 
 /* _recieved_SIGINT is set to true if SIGINT is recieved.  This allows the 
    program to exit cleanly if it is interupped via Cntrl-C
