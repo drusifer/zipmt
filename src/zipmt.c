@@ -30,8 +30,8 @@
 
 
 #define NTHREADS 4
-#define READBUFZ 100000 * 9 * 2
-#define WRITEBUFZ READBUFZ + 9216
+#define READBUFZ (1024*1024) * 4 /* 3Mb buffer */
+#define WRITEBUFZ READBUFZ + (1024*1024) /* give a little extra incase it inflates */
 
 /* _recieved_SIGINT is set to true if SIGINT is recieved.  This allows the 
    program to exit cleanly if it is interupped via Cntrl-C
@@ -138,7 +138,7 @@ void file_read_func(gpointer data, gpointer user_data) {
   b = BZ2_bzWriteOpen( &bzerror, tmpFd, 9, 0, 0 );
   if (bzerror != BZ_OK) {
     /* handle error */
-    fprintf(stderr, "BZError %d\n", bzerror);
+    fprintf(stderr, "WriteOpen BZError %d\n", bzerror);
     if (!errno) perror("system Error");
     g_atomic_int_set(&(tp_arg->error), TRUE);
     BZ2_bzWriteClose(&bzerror, b, FALSE, NULL, NULL);
@@ -162,7 +162,7 @@ void file_read_func(gpointer data, gpointer user_data) {
     if (bzerror == BZ_IO_ERROR) { 
       BZ2_bzWriteClose(&bzerror, b, FALSE, NULL, NULL);
       /* handle error */
-      fprintf(stderr, "BZError %d\n", bzerror);
+      fprintf(stderr, "BZError %d BZ_IO_ERROR\n", bzerror);
       if (!errno) perror("system Error");
       g_atomic_int_set(&(tp_arg->error), TRUE);
       break;
@@ -172,7 +172,7 @@ void file_read_func(gpointer data, gpointer user_data) {
   BZ2_bzWriteClose(&bzerror, b, FALSE, &bytesIn, &bytesOut);
   if (bzerror == BZ_IO_ERROR) {
     /* handle error */
-    fprintf(stderr, "BZError %d\n", bzerror);
+    fprintf(stderr, "BZError %d BZ_IO_ERROR\n", bzerror);
     if (!errno) perror("system Error");
     g_atomic_int_set(&(tp_arg->error), TRUE);
   }
@@ -184,9 +184,9 @@ void file_read_func(gpointer data, gpointer user_data) {
 void file_read_func_zlib(gpointer data, gpointer user_data) {
   tp_args_t* tp_arg = (tp_args_t*) data;
   gchar buf[READBUFZ];
-  size_t nread=0, currPos=tp_arg->startPos, readSz=READBUFZ;
+  size_t nread=0, written=0, currPos=tp_arg->startPos, readSz=READBUFZ;
   FILE* fd = fopen(tp_arg->filen, "r");
-  gint    processed = 0, written = 0;
+  gint    processed = 0;
   gzFile zfd = gzopen(tp_arg->tmpFilen, "wb9");
 
   if (!fd) {
@@ -221,7 +221,7 @@ void file_read_func_zlib(gpointer data, gpointer user_data) {
     written = gzwrite(zfd, &(buf[0]), nread);
     if (written != nread) { 
       /* handle error */
-      fprintf(stderr, "Zlib Error.  Supposed to write %d bytes but only wrote %d\n", nread, written);
+      fprintf(stderr, "Zlib Error.  Supposed to write %ld bytes but only wrote %ld\n", nread, written);
       g_atomic_int_set(&(tp_arg->error), TRUE);
       break;
     }
@@ -255,7 +255,7 @@ void stream_read_func(gpointer data, gpointer user_data) {
 
   if (bzerror != BZ_STREAM_END) {
     part->error = TRUE;
-    fprintf(stderr, "BZError %d\n", bzerror);
+    fprintf(stderr, "BZError %d SHOULD BE 4 (BZ_STREAM_END)\n", bzerror);
   }
 
   BZ2_bzCompressEnd(&bzs);
@@ -337,7 +337,7 @@ void omp_driver(gboolean verbose, gint nthreads, FILE* infd, FILE* outfd ) {
       total_written += part->outBufz;
 
       if( verbose ) {
-        fprintf(stderr, "\rI: %8.2fM, O: %8.2fM, parts: %4lld", 
+        fprintf(stderr, "\rI: %8.2fM, O: %8.2fM, parts: %4ld", 
                 total_read/(1024*1024.0), total_written/(1024*1024.0), 
                 part->partNumber);
       }
@@ -414,7 +414,7 @@ void stream_driver(gboolean verbose, gint nthreads,
       }
     }
     if (verbose) {
-      fprintf(stderr, "\rPartNum: %4lld, CurrNum: %4lld, QueueSize: %4lld, Pushed: %4ld, Alloced Parts: %4ld",
+      fprintf(stderr, "\rPartNum: %4ld, CurrNum: %4ld, QueueSize: %4ld, Pushed: %4ld, Alloced Parts: %4ld",
               partNum, currPart, PART_LIST_SIZE, pushed, alloced);
       fflush(stderr);
     }
@@ -461,7 +461,7 @@ void stream_driver(gboolean verbose, gint nthreads,
         g_slice_free(file_part_t, part);
         alloced--;
       } else {
-        fprintf(stderr, "Error Parts out of order! I got part %lld but I was looking for part %lld\n", part->partNumber, currPart);
+        fprintf(stderr, "Error Parts out of order! I got part %ld but I was looking for part %ld\n", part->partNumber, currPart);
         exit(1);
       }
     } else {
@@ -471,7 +471,7 @@ void stream_driver(gboolean verbose, gint nthreads,
     }
     
     if (verbose) {
-      fprintf(stderr, "\rPartNum: %4lld, CurrNum: %4lld, QueueSize: %4lld, Pushed: %4ld, Alloced Parts: %4ld",
+      fprintf(stderr, "\rPartNum: %4ld, CurrNum: %4ld, QueueSize: %4ld, Pushed: %4ld, Alloced Parts: %4ld",
               partNum, currPart, PART_LIST_SIZE, pushed, alloced);
       fflush(stderr);
     }
@@ -675,7 +675,7 @@ int main(int argc, char** argv) {
     fileSize = statBuf.st_size;
     partSize = statBuf.st_size/nthreads;
     
-    /* fprintf(stderr, "inputfile: %s.  Size=%lld partSize=%lld\n",
+    /* fprintf(stderr, "inputfile: %s.  Size=%ld partSize=%ld\n",
        filen, fileSize, partSize);
     */
     if (useGzip)
@@ -695,7 +695,7 @@ int main(int argc, char** argv) {
       
       getTmpFilen(&(tp_args[i].tmpFilen[0]), 1024, filen, i);
       
-      /* fprintf(stderr, "thread %d:\n  outf=%s\n  start=%lld\n  end=%lld\n",
+      /* fprintf(stderr, "thread %d:\n  outf=%s\n  start=%ld\n  end=%ld\n",
          i, tp_args[i].tmpFilen, tp_args[i].startPos, tp_args[i].endPos);
       */
 
@@ -757,10 +757,10 @@ int main(int argc, char** argv) {
         nread = read(tmpFd, &(readBuf[0]), READBUFZ);
         written = write(outFd, &(readBuf[0]), nread);
         if (written != nread) {
-          fprintf(stderr, "Error: read %d bytes from %s but could only write %d bytes to %s\n",
+          fprintf(stderr, "Error: read %ld bytes from %s but could only write %ld bytes to %s\n",
                   nread, tp_args[i].tmpFilen, written, outFile);
         } else {
-          /* fprintf(stderr, "Read %d bytes from %s, wrote %d byes to %s\n",
+          /* fprintf(stderr, "Read %ld bytes from %s, wrote %ld byes to %s\n",
              nread, tp_args[i].tmpFilen, written, outFile);
           */
         }
