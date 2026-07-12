@@ -1,2 +1,12 @@
 /src/zipmt
 /src/zipmt.o
+
+# Local agent files and caches
+/.claude
+/.via
+/.mcp.json
+/build
+
+# Python caches
+__pycache__/
+*.pyc
