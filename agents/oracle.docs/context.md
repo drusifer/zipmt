@@ -5,6 +5,8 @@ This file tracks the current state of knowledge organization, documentation stru
 ## Recent Decisions
 - **Generated global documentation layout for zipmt**: Formulated a structured docs framework consisting of user-facing guides, detailed architecture specs, decisions records, lessons learned logs, repository mindmaps, and a root entry point.
 - **Fixed `make tldr` target**: Modified `Makefile` to target `TLDR:` instead of `TL;DR:` to match the actual marker used in standard template files, enabling ripgrep to correctly parse project summaries.
+- **Configured `.gitignore`**: Added local agent folders, cache files, tool outputs, and python caches (`.claude`, `.via`, `.mcp.json`, `build`, `__pycache__`, `*.pyc`) to `.gitignore` to maintain repository hygiene.
+- **Committed and Pushed**: Staged and committed all documentation, workspace configurations, and agent files, and pushed to remote `origin/master`.
 
 ## Key Findings
 - **Missing Build Dependencies**:
@@ -19,4 +21,4 @@ This file tracks the current state of knowledge organization, documentation stru
 - **TLDR discoverability**: All new files (`README.md`, `MINDMAP.md`, `DECISIONS.md`, `LESSONS.md`, `docs/ARCH.md`, `docs/USAGE.md`) contain standard `TLDR:` blocks and successfully report through the updated `make tldr` tool.
 
 ---
-*Last updated: 2026-07-12T11:22:00*
+*Last updated: 2026-07-12T11:23:00*
