@@ -25,6 +25,7 @@ pub fn compress_stream(
     num_threads: usize,
 ) -> Result<(), ZipError> {
     let pool_size = if num_threads > 0 { num_threads } else { num_threads_default() };
+    crate::log_verbose!("Starting pipeline stream compression with pool size: {}", pool_size);
 
     // Setup channels with backpressure bounds
     let (job_tx, job_rx) = sync_channel::<Block>(pool_size * 2);
@@ -37,11 +38,12 @@ pub fn compress_stream(
         let mut workers = Vec::new();
 
         // Spawn worker threads
-        for _ in 0..pool_size {
+        for worker_id in 0..pool_size {
             let job_rx = Arc::clone(&job_rx);
             let result_tx = result_tx.clone();
             
             let handle = s.spawn(move || {
+                crate::log_verbose!("Worker thread {} started", worker_id);
                 loop {
                     let block_opt = {
                         let rx_guard = job_rx.lock().unwrap();
@@ -50,7 +52,16 @@ pub fn compress_stream(
 
                     match block_opt {
                         Some(block) => {
+                            crate::log_verbose!("Worker {} compressing block {}", worker_id, block.seq_num);
                             let compressed = compressor.compress(&block.data);
+                            let compressed_len = compressed.as_ref().map(|v| v.len()).unwrap_or(0);
+                            crate::log_verbose!(
+                                "Worker {} finished block {}: {} -> {} bytes",
+                                worker_id,
+                                block.seq_num,
+                                block.data.len(),
+                                compressed_len
+                            );
                             let result = CompressedBlock {
                                 seq_num: block.seq_num,
                                 data: compressed,
@@ -62,6 +73,7 @@ pub fn compress_stream(
                         None => break,
                     }
                 }
+                crate::log_verbose!("Worker thread {} exiting", worker_id);
             });
             workers.push(handle);
         }
@@ -71,6 +83,7 @@ pub fn compress_stream(
 
         // Spawn reader thread
         let reader_handle = s.spawn(move || -> Result<(), ZipError> {
+            crate::log_verbose!("Reader thread started. Buffer block size: {}MB", BLOCK_SIZE / (1024 * 1024));
             let mut buffer = vec![0u8; BLOCK_SIZE];
             let mut seq_num = 0u64;
 
@@ -88,6 +101,7 @@ pub fn compress_stream(
                     break;
                 }
 
+                crate::log_verbose!("Reader queued block {} ({} bytes)", seq_num, bytes_read);
                 let block = Block {
                     seq_num,
                     data: buffer[..bytes_read].to_vec(),
@@ -98,6 +112,7 @@ pub fn compress_stream(
                     break; // Workers shut down
                 }
             }
+            crate::log_verbose!("Reader thread reached EOF and exiting");
             Ok(())
         });
 
@@ -112,12 +127,14 @@ pub fn compress_stream(
                     pending_blocks.insert(result.seq_num, compressed_data);
                 }
                 Err(e) => {
+                    crate::log_verbose!("Writer encountered compression error on block {}", result.seq_num);
                     compression_error = Some(e);
                     break; // Abort on first error
                 }
             }
 
             while let Some(data) = pending_blocks.remove(&next_seq_num) {
+                crate::log_verbose!("Writer flushing block {} ({} bytes) to output", next_seq_num, data.len());
                 output.write_all(&data)?;
                 next_seq_num += 1;
             }
@@ -135,6 +152,7 @@ pub fn compress_stream(
         }
 
         while let Some(data) = pending_blocks.remove(&next_seq_num) {
+            crate::log_verbose!("Writer flushing final block {} ({} bytes) to output", next_seq_num, data.len());
             output.write_all(&data)?;
             next_seq_num += 1;
         }
@@ -144,6 +162,7 @@ pub fn compress_stream(
 
     scope_res?;
     output.flush()?;
+    crate::log_verbose!("Stream compression completed successfully.");
     Ok(())
 }
 

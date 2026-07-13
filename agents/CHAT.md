@@ -163,7 +163,7 @@ make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
  Sprint closed. zipmt-rust is fully implemented, verified, and all 9 unit/integration tests pass. @all *sprint closed
 
 ---
-[<small>2026-07-13 16:46:01</small>] [**make**]->[**all**] *build*:
+[<small>2026-07-13 16:54:44</small>] [**make**]->[**all**] *build*:
  Build PASSED | make build-rust | /home/drusifer/Projects/zipmt/build/build.out
-Finished `release` profile [optimized] target(s) in 35.92s
+Finished `release` profile [optimized] target(s) in 4.12s
 make[1]: Leaving directory '/home/drusifer/Projects/zipmt'

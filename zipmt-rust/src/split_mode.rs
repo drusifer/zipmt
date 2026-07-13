@@ -12,11 +12,12 @@ pub fn compress_file(
     num_threads: usize,
 ) -> Result<(), ZipError> {
     // Read entire input file
+    crate::log_verbose!("Reading input file: {:?}", input_path);
     let input_data = std::fs::read(input_path)?;
     let input_len = input_data.len();
 
     if input_len == 0 {
-        // Handle empty file: just compress empty buffer and write it
+        crate::log_verbose!("Empty file detected. Compressing empty buffer...");
         let compressed = compressor.compress(&[])?;
         let mut out_file = File::create(output_path)?;
         out_file.write_all(&compressed)?;
@@ -27,15 +28,24 @@ pub fn compress_file(
     let chunks_count = if num_threads > 0 { num_threads } else { rayon::current_num_threads() };
     let chunk_size = (input_len + chunks_count - 1) / chunks_count;
 
+    crate::log_verbose!(
+        "Input size: {} bytes. Partitioning into {} chunks of target size: {} bytes",
+        input_len,
+        chunks_count,
+        chunk_size
+    );
+
     // Collect chunks as slices
     let chunks: Vec<&[u8]> = input_data.chunks(chunk_size).collect();
 
+    crate::log_verbose!("Initializing Rayon thread pool with {} threads...", chunks_count);
     // Setup rayon thread pool override if num_threads is specified
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(chunks_count)
         .build()
         .map_err(|e| ZipError::Compression(e.to_string()))?;
 
+    crate::log_verbose!("Compressing chunks concurrently...");
     // Compress chunks concurrently
     let compressed_chunks: Result<Vec<Vec<u8>>, ZipError> = pool.install(|| {
         chunks
@@ -46,12 +56,14 @@ pub fn compress_file(
 
     let compressed_chunks = compressed_chunks?;
 
+    crate::log_verbose!("Writing {} compressed chunks sequentially to {:?}", compressed_chunks.len(), output_path);
     // Write all compressed chunks sequentially to output
     let mut out_file = File::create(output_path)?;
     for chunk in compressed_chunks {
         out_file.write_all(&chunk)?;
     }
 
+    crate::log_verbose!("Compression completed successfully.");
     Ok(())
 }
 
