@@ -1,16 +1,20 @@
-Multi-threaded compression utility for bzip2 and gzip written in C.
+Multi-threaded compression utility implementations in C and Go.
 
 TLDR:
-    Goal: Provide parallel bzip2/gzip compression on multi-core systems.
-    Status: Complete and documented, utilizing GLib and OpenMP.
-    Action: Use -k/--keep to prevent default source file deletion.
+    Goal: Provide parallel compression (bzip2, gzip, xz) on multi-core systems.
+    Status: Both C and Go versions evaluated and documented.
+    Action: Caution! C version deletes source files by default, while Go version contains a critical data-copy bug.
 
 # zipmt - Multi-threaded Compression Utility
 
-`zipmt` is a high-performance command-line compression utility written in C. It supports multi-threaded parallel compression using either **bzip2** or **gzip** algorithms, utilizing GLib and OpenMP to accelerate workloads on multi-core systems.
+`zipmt` is a high-performance command-line compression utility. It is implemented in two versions:
+1. **C Implementation (`src/`):** Multi-threaded `bzip2` and `gzip` compression using GLib thread pools and OpenMP.
+2. **Go Implementation (`zipmt-go/`):** Pure in-memory streaming pipeline utilizing goroutines and channels, supporting `xz`, `bz2`, and `gzip` formats.
 
 > [!CAUTION]
-> **Data Deletion warning:** By default, `zipmt` will delete the input source file upon successful compression. To prevent this, always run with the `-k` / `--keep` flag, or write to standard output using `-c`.
+> **Important Safety Warnings:**
+> - **C Version:** Automatically deletes the original source file by default upon successful compression. To prevent this, always run with the `-k` / `--keep` flag.
+> - **Go Version:** Contains a critical data-copy ordering bug in `ZipWriter.Write` that corrupts the input buffer and outputs compressed streams of zeros. Do not use the Go implementation in production until this is fixed.
 
 ---
 
@@ -63,6 +67,10 @@ tar -cf - ./my_folder | ./zipmt -s -c - > my_folder.tar.bz2
 ├── src/                    # C Source files
 │   ├── Makefile            # C build configuration
 │   └── zipmt.c             # Main source code
+├── zipmt-go/               # Go Source files
+│   ├── main.go             # Go entry point
+│   ├── go.mod / go.sum     # Go dependency definitions
+│   └── zipmt/              # Concurrency workers and compressors
 └── agents/                 # BobProtocol agent ecosystem
     ├── CHAT.md             # Agent team communication log
     └── [persona].docs/     # Persona state and instruction folders

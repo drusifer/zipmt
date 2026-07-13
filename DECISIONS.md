@@ -54,3 +54,26 @@ This document records the key architectural and design decisions made during the
 - **Rationale:** Restricts peak memory consumption to a predictable maximum of `READBUFZ * nthreads * 2` (approx. 8MB per thread).
 - **Consequences:**
   - Maintains stable, low-footprint memory usage during long-running stream operations.
+
+---
+
+## 5. Decision: Go Concurrency via Goroutines & Channels
+- **Date:** 2026-07-13
+- **Status:** Approved
+- **Context:** Parallelizing stream compression in Go requires thread-safe task distribution and response gathering.
+- **Decision:** Use unbuffered/buffered channels (`jobs` and `results`) and goroutines instead of explicit thread pools and mutex locks.
+- **Rationale:** Aligns with Go's CSP model ("Do not communicate by sharing memory; instead, share memory by communicating"). It eliminates locks and potential race conditions during task routing.
+- **Consequences:**
+  - Code is simpler, more readable, and easier to scale.
+  - Channels introduce minor routing overhead, which is negligible compared to compression computation.
+
+---
+
+## 6. Decision: Go In-Memory Reordering via Pending Parts Map
+- **Date:** 2026-07-13
+- **Status:** Approved
+- **Context:** Compressed parts arrive out of order because compression duration varies per block. Writing them out of order corrupts the output file.
+- **Decision:** The Go version routes all results to a single `writeWorker` goroutine. This worker maintains a `pending_parts` hash map (`map[int]*ZipPart`). If a block arrives out of order, it is cached in the map. When the expected sequence number arrives, it is written, and the map is checked iteratively for subsequent parts.
+- **Rationale:** Keeps write operations single-threaded to avoid multi-thread write contention and disk head thrashing, while avoiding complex mutex-locked priority queues.
+- **Consequences:**
+  - Storing uncompressed/compressed parts in the map increases memory consumption temporarily if block compression times diverge significantly.

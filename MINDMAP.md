@@ -20,9 +20,12 @@ mindmap
       MINDMAP.md["MINDMAP.md (This file)"]
       docs_ARCH["docs/ARCH.md (Architecture)"]
       docs_USAGE["docs/USAGE.md (User Guide)"]
-    Source Code
+    C Source Code
       src_Makefile["src/Makefile (Build targets)"]
       src_zipmt["src/zipmt.c (Main logic)"]
+    Go Source Code
+      go_main["zipmt-go/main.go (Go Entry)"]
+      go_zipmt["zipmt-go/zipmt/*.go (Goroutines, Channels, Compressors)"]
     Agents Workspace
       agents_CHAT["agents/CHAT.md (Handoff Log)"]
       agents_PROJ["agents/PROJECT.md (Tool Capabilities)"]
@@ -51,6 +54,24 @@ The C source code is consolidated into a single file `src/zipmt.c`. The table be
 | `stream_driver` | Driver | GLib Thread Pool pipeline coordinator | Manages sequential read loop, GThreadPool submission, thread throttling, and sequential output writer. |
 | `stream_read_func` | Worker | Stream block compression | Worker executing `BZ2_bzCompress` on a block, inserts result sorted into `PART_LIST`. |
 | `omp_driver` | Driver | OpenMP pipeline coordinator | Alternative stream driver parallelizing compression using OpenMP `#pragma omp parallel for`. |
+
+---
+
+## 2.1. Go Source Code Architecture Map (`zipmt-go/`)
+
+The Go codebase is modularized under the `zipmt-go/` directory. Below is the map of its components:
+
+| File / Component | Package | Role | Implementation Highlights |
+|------------------|---------|------|---------------------------|
+| `main.go` | `main` | Entry Point | Parses CLI flags, opens file/stdin readers, configures stdout/file writers, and calls `zipmt.ZipMt`. |
+| `zipmt/zipmt.go` | `zipmt` | Pipeline Core | Defines algorithms (`XZ`, `BZ2`, `GZ`), `Compressor` interface, `ZipPart` struct, and initiates the reader thread. |
+| `zipmt/zipwriter.go` | `zipmt` | Writer Manager | Implements `io.Writer`. Coordinates the lifecycle of the compressor pool and the write worker. |
+| `zipmt/compression_worker.go` | `zipmt` | Compression Pool | Goroutines that consume uncompressed buffers from `jobs`, shrink them, and post to `results`. |
+| `zipmt/write_worker.go` | `zipmt` | Sequential Writer | Goroutines that fetch finished jobs off `results` and reorder them via maps before disk writes. |
+| `zipmt/xzzipper.go` | `zipmt` | XZ Compressor | Implements `Compressor` using `github.com/ulikunitz/xz`. **Contains Verify crash bug.** |
+| `zipmt/bz2zipper.go` | `zipmt` | BZ2 Compressor | Implements `Compressor` using `github.com/larzconwell/bzip2` and `compress/bzip2`. |
+| `zipmt/gzipper.go` | `zipmt` | Gzip Compressor | Implements `Compressor` using standard library `compress/gzip`. |
+| `zipmt/zipmt_test.go` | `zipmt` | Unit Testing | Tests individual compressors and the write block pipeline. **Contains hardcoded fail.** |
 
 ---
 

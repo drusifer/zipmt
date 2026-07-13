@@ -1,13 +1,13 @@
 # Next Steps
 
 ## Immediate Next Action
-- Wait for user feedback on the generated documentation files.
+- Wait for user feedback or commands.
 
 ## Waiting On
-- User review of docs (`README.md`, `MINDMAP.md`, `DECISIONS.md`, `LESSONS.md`, `docs/ARCH.md`, `docs/USAGE.md`).
+- User review of updated summary filenames.
 
 ## Planned Work
-- [ ] Incorporate user feedback or additional details requested.
+- [ ] No planned work.
 
 ---
-*Last updated: 2026-07-12T11:22:00*
+*Last updated: 2026-07-13T13:44:00*

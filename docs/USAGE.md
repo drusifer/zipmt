@@ -1,127 +1,152 @@
-Compilation instructions and user manual for zipmt CLI compression utility.
+Compilation instructions and user manual for zipmt C and Go CLI compression utilities.
 
 TLDR:
-    Problem: Standard setup instructions are missing for building and using zipmt.
-    Solution: Added detailed dependency lists, build commands, CLI flag references, and examples.
-    Breaking Changes: No, but warning on default file deletion remains critical.
+    Problem: Missing setup and usage guidelines for the Go implementation.
+    Solution: Added detailed build guides, CLI flag references, and usage examples for both C and Go versions.
+    Breaking Changes: No. Go version does not delete files by default (unlike C version).
 
 # zipmt User Guide & Compilation Reference
 
-This document provides instructions for compiling, installing, and using the `zipmt` multi-threaded compression utility.
+This document provides instructions for compiling, installing, and using both the C and Go implementations of the `zipmt` multi-threaded compression utility.
 
-## 1. Compilation & Installation
+---
 
-`zipmt` depends on GLib 2.0, libbz2, and zlib libraries, and uses OpenMP for loop-level parallelization.
+## 1. C Implementation: Build & Run
+
+The C version depends on GLib 2.0, libbz2, and zlib libraries, and utilizes OpenMP.
 
 ### Prerequisites (Ubuntu/Debian)
-Ensure you have the required build tools and development libraries installed:
 ```bash
 sudo apt-get update
 sudo apt-get install build-essential libglib2.0-dev libbz2-dev zlib1g-dev
 ```
 
 ### Building `zipmt`
-1. Navigate to the `src` directory:
+1. Navigate to the C source directory:
    ```bash
    cd src
    ```
-2. Build the binary using `make`:
+2. Build the binary:
    ```bash
    make
    ```
    This compiles `zipmt.c` with optimization flags (`-O3`), OpenMP support (`-fopenmp`), and produces the `zipmt` executable.
 
-### Installing and Uninstalling
-To install the compiled binary globally to `/usr/bin/`:
+### Installation
 ```bash
-sudo make install
-```
-To remove the installed binary:
-```bash
-sudo make uninstall
-```
-To clean build artifacts:
-```bash
-make clean
+sudo make install    # Installs to /usr/bin/zipmt
+sudo make uninstall  # Removes from /usr/bin/zipmt
+make clean           # Cleans build artifacts
 ```
 
 ---
 
-## 2. Command Line Synopsis
+## 2. Go Implementation: Build & Run
 
+The Go version requires Go 1.20 or newer.
+
+### Prerequisites
+Make sure Go is installed on your system. To verify:
+```bash
+go version
+```
+
+### Building `zipmt-go`
+1. Navigate to the Go directory:
+   ```bash
+   cd zipmt-go
+   ```
+2. Download dependencies and compile the binary:
+   ```bash
+   go build -o zipmt-go main.go
+   ```
+   This produces the executable `zipmt-go` (or `zipmt-go.exe` on Windows).
+
+---
+
+## 3. Command Line CLI Reference
+
+Both implementations provide different command-line arguments and flags:
+
+### C Version Arguments
 ```
 zipmt [OPTIONS] <file>
 ```
 * `<file>`: The name of the file to compress. Use `"-"` to indicate standard input.
 
-### Command Line Options
-
-| Short Option | Long Option | Description |
-|--------------|-------------|-------------|
+| Option | Long Option | Description |
+|--------|-------------|-------------|
 | `-t <int>` | `--threads=<int>` | Number of threads to use. (Default: 4). |
 | `-v` | `--verbose` | Show progress and execution statistics. |
 | `-o <file>` | `--outfile=<file>` | Name of the output file. (Defaults to `<file>.[bz2\|gz]`). |
-| `-c` | `--stdout` | Write compressed output to standard output (redirect with `>`). |
+| `-c` | `--stdout` | Write compressed output to standard output. |
 | `-s` | `--stream` | Compress using the stream-based method. |
-| `-m` | `--omp` | Compress using OpenMP instead of GLib Thread Pools (only valid in stream mode). |
+| `-m` | `--omp` | Compress using OpenMP instead of GLib (stream mode only). |
 | `-z` | `--zip` | Compress using gzip algorithm instead of default bzip2. |
 | `-k` | `--keep` | Do not delete the input file when compression succeeds. |
 
----
-
-## 3. Usage Examples
-
-### Compress a File (Default bzip2, Split Mode)
-Compresses `database.sql` into `database.sql.bz2` using 4 threads. 
-> [!WARNING]
-> By default, `zipmt` will delete the input file (`database.sql`) after successful compression!
-```bash
-zipmt database.sql
+### Go Version Flags
+```
+zipmt-go [FLAGS]
 ```
 
-### Compress and Keep the Original File
-To preserve the original input file after compression, use the `-k` or `--keep` flag:
+| Flag | Value Type | Description |
+|------|------------|-------------|
+| `-input` | `string` | The input file name to compress. (Default: Stdin). |
+| `-out` | `string` | The output file name to write to. Use `"-"` for stdout. (Default: `<input>.<algo>`). |
+| `-algo` | `string` | Compression format. Must be one of `[xz, bz2, gz]`. (Default: `xz`). |
+| `-t` | `boolean` | Run verification test mode on the input file. |
+
+---
+
+## 4. Usage Examples
+
+### Compress a File (C Version)
+Compresses `database.sql` into `database.sql.bz2` using 4 threads. 
+> [!WARNING]
+> By default, the C version will delete the input file (`database.sql`) after successful compression!
 ```bash
+# Deletes database.sql on success
+zipmt database.sql
+
+# Keeps database.sql
 zipmt -k database.sql
 ```
 
-### Compress with a Specific Number of Threads
-To utilize more CPU cores, specify the number of threads:
+### Compress a File (Go Version)
+Compresses `database.sql` into `database.sql.xz` using Go channel pipelines.
+> [!NOTE]
+> The Go implementation **never** deletes the input file by default.
 ```bash
-zipmt -t 8 -k database.sql
+# Generates database.sql.xz; preserves database.sql
+./zipmt-go -input database.sql
+
+# Compress using bzip2 format
+./zipmt-go -algo bz2 -input database.sql
 ```
 
-### Compress using Gzip (Split Mode Only)
-Compresses `server.log` to `server.log.gz` using gzip algorithm:
+### Pipe Compression (Go Version)
+Read data from stdin and write compressed gzip output to stdout:
 ```bash
-zipmt -z -k server.log
+cat large_data.csv | ./zipmt-go -algo gz -out - > compressed.gz
 ```
 
-### Streaming from Standard Input
-To compress standard input, you must specify `"-"` as the file and use `-s` / `--stream` mode. You must also redirect output (`-c` or `-o`):
+### Test File Validity (Go Version)
+Runs a decompression verify pass to check if the file is valid:
 ```bash
-cat large_dataset.csv | zipmt -s -o large_dataset.csv.bz2 -
-# OR using stdout redirect:
-tar -cf - ./project | zipmt -s -c - > project.tar.bz2
-```
-
-### Stream Compression using OpenMP
-To use OpenMP parallelization instead of GLib Thread Pools in stream mode:
-```bash
-zipmt -s -m -k large_file.bin
+./zipmt-go -t -algo xz -input compressed_file.xz
 ```
 
 ---
 
-## 4. Behavioral Notes & Safety Warnings
+## 5. Behavioral Differences & Safety Caveats
 
-> [!CAUTION]
-> **Data Deletion Hazard:**
-> Unlike standard command line utilities like `gzip` or `bzip2` which can be configured to keep or delete, `zipmt` **deletes the input file by default**. ALWAYS use the `-k` / `--keep` option if you want to preserve your source data, or use stdout `-c` to pipe results.
-
-### Incompatible Option Combinations
-- **Gzip in Stream Mode:** You cannot use gzip compression (`-z`) in stream mode (`-s`). It will exit with:
-  `Error: you cannot use gzip compression in stream mode`
-- **Output Clashes:** You cannot combine `-c` (stdout) and `-o` (explicit outfile). It will exit with:
-  `You can not specify -c and -o together`
-- **Stdin stream requirement:** Reading from stdin `"-"` automatically forces stream mode (`-s` is set to `TRUE`). You must specify `-o` or `-c` when reading from stdin.
+1. **File Preservation:**
+   - **C Version:** Automatically deletes the original source file unless `-k` / `--keep` is specified.
+   - **Go Version:** Always preserves the original source file.
+2. **Default Algorithms:**
+   - **C Version:** Defaults to `bzip2`.
+   - **Go Version:** Defaults to `xz`.
+3. **Format Support Matrix:**
+   - **C Version:** Supports `bzip2` (Split & Stream modes) and `gzip` (Split mode only). Does not support `xz`.
+   - **Go Version:** Supports `xz`, `bz2`, and `gzip` (all in memory pipeline streams).

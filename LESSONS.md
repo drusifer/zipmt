@@ -37,3 +37,23 @@ This document indexes critical lessons learned during the development, compilati
 - **The Issue:** The default mode of operation deletes the source file upon successful compression, which can lead to accidental data loss if the user forgets to supply `-k` or is unaware of this behavior.
 - **The Solution:** Prominently place CAUTION and WARNING alerts in all user guides, READMEs, and help outputs.
 - **The Rule:** Any utility that performs destructive operations (like deleting original files) must have highly visible warnings in the user interface and documentation.
+
+---
+
+## 4. Lesson: Go `copy()` Parameter Ordering Bug
+- **Date:** 2026-07-13
+- > **Tags:** #Go #Memory #Bugs
+- **Context:** In `zipwriter.go:38`, the code copies uncompressed bytes into a new task block.
+- **The Issue:** The Go built-in function is structured as `copy(dst, src)`. The code used `copy(data[start:end], chunk)`, which mistakenly copied from the empty destination `chunk` into the populated source buffer `data`. This resulted in the user's input stream being mutated to all `0`s, and the compressor outputting compressed zeros.
+- **The Solution:** Reverse the parameters: `copy(chunk, data[start:start+chunkz])`.
+- **The Rule:** ALWAYS verify that Go `copy` calls are written as `copy(destination, source)`. Build active integration tests that verify compressed content matches uncompressed content upon decompression.
+
+---
+
+## 5. Lesson: Defensive Nil-Pointer Checking in Error Handling
+- **Date:** 2026-07-13
+- > **Tags:** #Go #ErrorHandling #Panic
+- **Context:** In `xzzipper.go`, `Verify()` returns `reader.Verify()` only when the reader initialization fails.
+- **The Issue:** The statement `if err != nil { err = reader.Verify() }` means that if `xz.NewReader` fails and returns an error, the code attempts to call `.Verify()` on a `nil` `reader` pointer, leading to a nil-pointer dereference panic. If it succeeds, the validation is skipped.
+- **The Solution:** Return the error immediately if `err != nil`. Only invoke methods on `reader` when `err == nil`.
+- **The Rule:** Never invoke methods on struct pointers returned alongside non-nil errors, as the pointer is likely `nil`.

@@ -3,22 +3,28 @@
 This file tracks the current state of knowledge organization, documentation structure, and recent changes made by the Oracle.
 
 ## Recent Decisions
-- **Generated global documentation layout for zipmt**: Formulated a structured docs framework consisting of user-facing guides, detailed architecture specs, decisions records, lessons learned logs, repository mindmaps, and a root entry point.
-- **Fixed `make tldr` target**: Modified `Makefile` to target `TLDR:` instead of `TL;DR:` to match the actual marker used in standard template files, enabling ripgrep to correctly parse project summaries.
-- **Configured `.gitignore`**: Added local agent folders, cache files, tool outputs, and python caches (`.claude`, `.via`, `.mcp.json`, `build`, `__pycache__`, `*.pyc`) to `.gitignore` to maintain repository hygiene.
-- **Committed and Pushed**: Staged and committed all documentation, workspace configurations, and agent files, and pushed to remote `origin/master`.
+- **Evaluated separate Go Implementation (`zipmt-go`)**: Analyzed the newly merged Go version and documented its architecture, flags, and usage.
+- **Side-by-Side Documentation**: Updated `docs/ARCH.md`, `docs/USAGE.md`, `README.md`, and `MINDMAP.md` to cleanly present both C and Go implementations.
+- **Identified Critical Go Bugs**: Logged a critical copy-ordering bug in `ZipWriter.Write` (causing buffer zeroing) and a nil-pointer verify bug in XZ compressor, documenting them as major architectural risks.
+- **Re-Initialized Bob Protocol discovery links**: Ran `setup_agent_links.py` to confirm that all 9 personas and 13 shared skills are discoverable by development tools.
+- **Brought State Files to Protocol Compliance**: Generated task summaries under `agents/oracle.docs/` using hyphenated timestamps (`YYYY-mm-ddTHH-MM.md`) to exclude colons for filesystem safety.
 
 ## Key Findings
-- **Missing Build Dependencies**:
-  - Found that building the `zipmt` tool requires `-dev` versions of headers (`bzlib.h` via `libbz2-dev`), which was not documented or pre-installed, leading to immediate compilation failures. This has been added to user instructions in `docs/USAGE.md`.
-- **Destructive Default Behavior**:
-  - Identified that `zipmt` deletes original source files by default when compression finishes. Clear safety warnings were placed in `README.md`, `docs/USAGE.md`, and `LESSONS.md`.
-- **GLib Deprecated Calls**:
-  - Noted that `zipmt.c` invokes `g_thread_init()`, which is deprecated in modern GLib versions. This was documented as technical debt in `docs/ARCH.md` and `LESSONS.md`.
+- **Discovery links verified**:
+  - Found 9 active personas and 13 shared skills. Symlinks are correctly registered.
+  - Capability configs are fully aligned in `PROJECT.md`.
+- **Go Version Data Corruption Bug**:
+  - Located in `zipmt-go/zipmt/zipwriter.go:38` (`copy(data[start:end], chunk)`). It overwrites the input data with zeros and outputs a compressed stream of all zeros.
+- **Go Version XZ Verification Panic Bug**:
+  - Located in `zipmt-go/zipmt/xzzipper.go:27-29` (`if err != nil { err = reader.Verify() }`). Attempts to verify on a `nil` reader if an initialization error occurs, triggering a nil-pointer panic.
 
 ## Important Notes
-- **Repository documentation is fully indexed**: All new files are registered under `/home/drusifer/Projects/zipmt/agents/DOCUMENTATION_INDEX.md`.
-- **TLDR discoverability**: All new files (`README.md`, `MINDMAP.md`, `DECISIONS.md`, `LESSONS.md`, `docs/ARCH.md`, `docs/USAGE.md`) contain standard `TLDR:` blocks and successfully report through the updated `make tldr` tool.
+- **TLDR compliance**: Added a standard `TLDR:` block to `zipmt-go/README.md`. All files are registered in the documentation index and discoverable via `make tldr`.
+- **Task Summaries written**:
+  - `GenerateDocs_Summary_2026-07-12T11-22.md`
+  - `EvalGoImpl_Summary_2026-07-13T13-39.md`
+  - `BobProtocolInit_Summary_2026-07-13T13-43.md`
+  - `SummaryReview_Summary_2026-07-13T13-44.md`
 
 ---
-*Last updated: 2026-07-12T11:23:00*
+*Last updated: 2026-07-13T13:43:00*

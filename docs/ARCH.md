@@ -1,51 +1,68 @@
-Architecture overview for the zipmt multi-threaded compression utility.
+Architecture overview for the zipmt C and Go multi-threaded compression utility implementations.
 
 TLDR:
-    Impact: Establishes components, thread models, data structures, and pipeline flow.
-    Next Steps: Document usage, decisions, and lessons.
+    Impact: Establishes components, concurrency models, data structures, and pipeline flows for both C and Go versions.
+    Next Steps: Refer to USAGE.md for building, and LESSONS.md for details on safety warnings and implementation bugs.
 
 # zipmt Architecture Overview
 
-This document provides a high-level architectural overview of the `zipmt` multi-threaded compression utility.
+This document provides a high-level architectural overview of both the C and Go implementations of the `zipmt` multi-threaded compression utility.
+
+---
 
 ## 1. System Overview
 
-`zipmt` is a command-line tool written in C that performs multi-threaded data compression using either the **bzip2** (default) or **gzip** algorithm. It is designed to accelerate compression on multi-core systems by parallelizing the compression workload across multiple threads.
+`zipmt` parallelizes file and stream compression using multi-threading. The project contains two distinct codebases:
 
-The utility operates in one of two major parallelization modes:
-1. **Split Mode (Default / File-Based):** Best for compressing large files on disk. The input file is statically split into `N` equal-sized chunks. Each chunk is compressed in parallel by a worker thread to a temporary file. Once all threads are complete, the main thread concatenates the temporary files in the correct sequence to produce the final compressed file.
-2. **Stream Mode (Stream-Based):** Triggered by specifying `--stream` (`-s`) or automatically when compressing from standard input (`-`). The input stream is read sequentially in fixed-size blocks (default 4MB). These blocks are submitted to a thread pool for parallel compression. A reordering queue ensures that the compressed blocks are written to the output file in the original sequential order.
+### C Implementation (`src/`)
+Written in C, targeting UNIX-like environments. It supports two modes of operation:
+1. **Split Mode (Default / File-Based):** Statically partitions a file on disk into `N` chunks, compresses each chunk in parallel to a temporary file via GLib thread pools, and concatenates the resulting files at the end. Supports `bzip2` and `gzip`.
+2. **Stream Mode (Stream-Based):** Sequential reading of 4MB blocks from an input stream, parallel compression via `GThreadPool` or OpenMP loops, and structured queue-based reordering before writing outputs. Supports `bzip2` only.
+
+### Go Implementation (`zipmt-go/`)
+Written in Go, targeting cross-platform environments. It operates purely as an in-memory stream pipeline:
+- The input stream is read sequentially in 4MB chunks by a single `readWorker` goroutine.
+- Chunks are distributed to a pool of `NumCPU` `compressionWorker` goroutines via Go channels.
+- Compressed parts are collected in a `writeWorker` goroutine which maintains a pending map to reorder blocks sequentially before writing them out. Supports `xz` (default), `bz2`, and `gzip` compression formats.
 
 ---
 
 ## 2. Architectural Principles
 
-- **Concurrency via GLib:** Concurrency and thread management are abstracted using the GLib library's `GThreadPool` and thread utilities.
-- **Optional OpenMP Concurrency:** Supports loop-level parallelization via OpenMP (`#pragma omp parallel for`) in stream mode as an alternative to GLib thread pools.
-- **Divide and Conquer:** Statically partitions files in Split Mode to eliminate the need for inter-thread synchronization during compression, maximizing parallel efficiency.
-- **Pipeline Processing with Reordering:** Uses a thread-safe priority queue (sorted linked list) in Stream Mode to decouple sequential reading/writing from parallel compression.
+### C Version Concurrency
+- **Abstraction via GLib:** Thread allocation, queue structures, and mutex operations use GLib 2.0.
+- **OpenMP Parallelism:** Alternative stream loop-level parallelization using GCC `#pragma omp parallel for`.
+- **Static Partitioning (Split Mode):** Eliminates inter-thread communication or synchronization during compression by dedicating unique temp files to each core.
+
+### Go Version Concurrency
+- **Goroutines & Channels:** Replaces thread pools and explicit locks with goroutines and channel-based message passing.
+- **Pure Pipeline Architecture:** Uses three pipeline stages (Reader $\rightarrow$ Compressors $\rightarrow$ Writer) communicating via buffered channels.
+- **Interface Decoupling:** Generalizes compression algorithms (`xz`, `bz2`, `gz`) under a common `Compressor` interface:
+  ```go
+  type Compressor interface {
+      Shrink(input_buf []byte, output_writer io.Writer) error
+      Verify(reader io.Reader) error
+  }
+  ```
 
 ---
 
 ## 3. Component Diagram
 
-The following Mermaid diagram shows the components and data flow for both modes of operation:
-
 ```mermaid
 graph TD
-    subgraph Split Mode
-        A[Input File] -->|Stat File Size| B[Main Thread]
-        B -->|Statically Split into N parts| C[Worker Threads]
+    subgraph C Version: Split Mode
+        A[Input File] -->|Split File Size| B[Main Thread]
+        B -->|Submits Tasks| C[GThreadPool Worker Threads]
         C -->|Compress Chunk| D[Temp Files .tmp0 ... .tmpN-1]
-        D -->|Ordered Cat| E[Output File]
+        D -->|Ordered Concat| E[Output File]
     end
 
-    subgraph Stream Mode
-        F[Input Stream / stdin] -->|Sequential Read| G[Main Thread Reader]
-        G -->|Push 4MB Blocks| H[GLib Thread Pool / OpenMP]
-        H -->|Compress in Parallel| I[Reordering Queue PART_LIST]
-        I -->|Sorted Insert & Match currPart| J[Main Thread Writer]
-        J -->|Sequential Write| K[Output Stream / stdout]
+    subgraph Go Version: Pipeline Stream Mode
+        F[Input Source / stdin] -->|Read Chunk| G[Reader Goroutine]
+        G -->|jobs Channel chan ZipPart| H[Compression Goroutine Pool]
+        H -->|results Channel chan ZipPart| I[Writer Goroutine]
+        I -->|Reorder & Write| J[Output Target / stdout]
     end
 ```
 
@@ -53,96 +70,90 @@ graph TD
 
 ## 4. Class & Data Structures
 
-`zipmt` defines two main data structures to manage task state:
+### C Version Structures
+- **`tp_args_t` (Split Mode):** Configures and tracks filesystem offsets for worker threads.
+- **`file_part_t` (Stream Mode):** Fixed-size in-memory buffers (4MB read / 5MB write) labeled with `partNumber`.
+- **`PART_LIST` / `PART_LIST_LOCK`:** Singly linked list (`GSList`) protected by a mutex (`GMutex`) for block reordering.
 
-### `tp_args_t` (Used in Split Mode)
-Represents the task configuration and tracking structure for a single chunk of the input file.
-```c
-typedef struct tp_args {
-  const gchar* filen;        // Input filename
-  off_t startPos;            // Start byte offset of chunk
-  off_t endPos;              // End byte offset of chunk
-  gint processed;            // Progress percentage (0 - 100)
-  gchar tmpFilen[1024];      // Path to temporary file for this chunk
-  gboolean error;            // Error flag set by worker thread
-  gboolean verbose;          // Verbose output setting
-  gboolean done;             // Done flag set by worker thread
-} tp_args_t;
-```
-
-### `file_part_t` (Used in Stream Mode)
-Represents a block of data traveling through the streaming pipeline.
-```c
-typedef struct file_part {
-  off_t    partNumber;       // Monotonically increasing part number for reordering
-  gchar    inBuf[READBUFZ];  // Input uncompressed buffer (4MB)
-  gulong   inBufz;           // Actual bytes read into inBuf
-  gchar    outBuf[WRITEBUFZ];// Output compressed buffer (5MB)
-  gulong   outBufz;          // Actual compressed bytes in outBuf
-  gboolean error;            // Error flag set during compression
-} file_part_t;
-```
-
-### Thread Synchronization Structures (Stream Mode)
-- `PART_LIST`: A Glib singly linked list (`GSList *`) representing the queue of finished blocks.
-- `PART_LIST_LOCK`: A Glib mutex (`GMutex *`) guarding access to `PART_LIST`.
+### Go Version Structures
+- **`ZipPart`:** Holds uncompressed and compressed byte slices, parts indices, and EOF state.
+  ```go
+  type ZipPart struct {
+      Inbuf  []byte
+      In_sz  int
+      Outbuf []byte
+      Out_sz int
+      Num    int
+      IsEOF  bool
+  }
+  ```
+- **`ZipWriter`:** Implements `io.Writer`. Spawns workers and coordinates the jobs/results channels.
+  ```go
+  type ZipWriter struct {
+      output_writer io.Writer
+      pool_size     int
+      chunk_size    int
+      jobs          chan *ZipPart
+      results       chan *ZipPart
+      eof           chan bool
+      part_number   int
+      algo_name     AlgoName
+      err           atomic.Value
+  }
+  ```
 
 ---
 
 ## 5. Sequence & Interaction Flows
 
-### Split Mode Sequence
-1. **Command Line Parsing:** Main thread parses arguments and verifies target files.
-2. **Task Partitioning:** Calculates chunk size as `fileSize / nthreads`.
-3. **Thread Pool Spawning:** Instantiates a GLib Thread Pool (`GThreadPool`) with size `nthreads`.
-4. **Task Submission:** Submits `nthreads` instances of `tp_args_t` to the pool running `file_read_func` (for bzip2) or `file_read_func_zlib` (for gzip).
-5. **Progress Monitoring:** If `-v` is set, the main thread runs `stat_func`, printing progress of each thread every second.
-6. **Thread Reclamation:** Frees the thread pool, waiting for all threads to terminate.
-7. **Assembly:** Renames the first temp file `.tmp0` to the target output filename, then appends the contents of the remaining temp files (`.tmp1` through `.tmpN-1`) in order.
-8. **Cleanup:** Deletes all temporary files.
+### C Stream Mode Flow vs. Go Pipeline Flow
+Both implementations solve the block-reordering problem differently:
 
-### Stream Mode Pipeline Sequence
-1. **Thread Pool Initialization:** Main thread spawns thread pool targetting `stream_read_func` with `nthreads` workers.
-2. **Reader Loop:**
-   - Reads up to 4MB of data into a new `file_part_t` chunk.
-   - Assigns a sequential `partNumber`.
-   - Pushes the chunk to the thread pool (`g_thread_pool_push`).
-   - Throttles input reading to prevent infinite buffer allocation if compression is slower than reading (limits pushed-but-incomplete parts to `nthreads * 2`).
-3. **Compression Worker:**
-   - Compresses the uncompressed buffer in-memory using `BZ2_bzCompress` (bzip2).
-   - Locks `PART_LIST_LOCK`.
-   - Inserts the completed chunk into `PART_LIST` sorted by `partNumber`.
-   - Unlocks `PART_LIST_LOCK`.
-4. **Writer Loop (Main Thread):**
-   - Periodically checks the head of `PART_LIST`.
-   - If the head matches `currPart` (the next expected sequential part), removes it from the list.
-   - Writes the compressed output buffer to the output file or stdout.
-   - Frees the slice (`g_slice_free`) and increments `currPart`.
-5. **Drain Queue:** Once reader hits EOF, the thread pool is freed (waiting for remaining compression to finish). The main thread drains the remaining parts in `PART_LIST` sequentially and writes them out.
+1. **C implementation (sorted list insertion):**
+   - Main thread reads a block.
+   - Pushes block to thread pool.
+   - Workers compress, lock a mutex, insert the block into `PART_LIST` sorted by `partNumber`, and unlock.
+   - Main thread writer periodically checks the head of `PART_LIST`. If `head.partNumber == currPart`, it pops and writes it out.
+
+2. **Go implementation (channel routing + map lookup):**
+   - Reader goroutine reads blocks and calls `ZipWriter.Write`.
+   - `ZipWriter` splits data into chunks, assigns `part_number`, and sends them down `jobs` channel.
+   - `compressionWorkers` read from `jobs`, compress, and send directly to `results` channel.
+   - `writeWorker` reads from `results`. If the incoming part matches `next_part`, it writes it. Otherwise, it stores it in a `pending_parts` map (`map[int]*ZipPart`) and checks the map on subsequent iterations.
 
 ---
 
-## 6. Technical Stack
+## 6. Technical Stack Comparison
 
-- **Core Language:** C (GNU C Dialect)
-- **External Dependencies:**
-  - **GLib 2.0:** High-level platform abstraction (threads, mutexes, thread pools, data structures).
-  - **bzip2 (libbz2):** Bzip2 block-sorting file compressor library.
-  - **zlib (libz):** Zlib compression library (used in split mode gzip compression).
-- **Compilation Toolchain:** GCC with OpenMP support enabled (`-fopenmp`).
+| Feature | C Implementation | Go Implementation |
+|---------|------------------|-------------------|
+| **Language** | C (GNU Dialect) | Go (Golang 1.20+) |
+| **Concurrency API** | GLib 2.0 / OpenMP | Goroutines, Channels, `sync/atomic` |
+| **Bzip2 compression** | Native `libbz2` | Third-party `github.com/larzconwell/bzip2` |
+| **Gzip compression** | Native `libz` | Standard library `compress/gzip` |
+| **XZ compression** | Not Supported | Third-party `github.com/ulikunitz/xz` |
+| **Threading Strategy** | Fixed GThreadPool / OMP threads | NumCPU Worker goroutines + 2 IO goroutines |
 
 ---
 
-## 7. Refactoring Status & Technical Debt
+## 7. Refactoring Status, Debt, & Critical Bugs
 
-### Deprecated API Usage
-The code uses several APIs that are deprecated or modified in modern GLib versions:
-- `g_thread_init`: No longer needed or available in GLib >= 2.32 (threads are initialized automatically).
-- `g_mutex_new`/`g_mutex_free`: Modern GLib uses static mutex initialization or inline allocation with `g_mutex_init`/`g_mutex_clear`.
+### C Version Debt
+- **Deprecated GLib API:** Relies on deprecated functions `g_thread_init`, `g_mutex_new`, and `g_mutex_free`.
+- **Default Deletion:** Deletes files by default upon success, creating a safety hazard.
+- **Asymmetric feature support:** Gzip is not supported in Stream Mode.
 
-### Missing Library Compilation Error
-The project fails to compile out-of-the-box on clean environments because of a missing dependency on `libbz2-dev` (`bzlib.h`). A proper setup instruction or a package manager guide needs to be documented.
+### Go Version Critical Bugs
+The Go implementation contains severe logic bugs that block normal usage:
 
-### Compression Mode Asymmetry
-- Gzip/zlib compression is only supported in **Split Mode** (`file_read_func_zlib`). There is no gzip option implemented for **Stream Mode**.
-- OpenMP parallelism is only implemented for bzip2 in stream mode (`omp_driver`); it is not implemented for gzip, nor is it available in Split Mode.
+1. **Critical Data Corruption in `ZipWriter.Write` ([zipwriter.go:38](file:///home/drusifer/Projects/zipmt/zipmt-go/zipmt/zipwriter.go#L38)):**
+   - **The Bug:** `copy(data[start:start+chunkz], chunk)` copies from the newly allocated, empty `chunk` slice into the source `data` slice.
+   - **Consequence:** This clears the caller's input buffer (fills it with zeros) and sends only zeroed buffers to compression workers. The output is a compressed stream of zeros, and caller's input data is corrupted.
+   - **Resolution:** Change to `copy(chunk, data[start:start+chunkz])` (copy from source data into destination chunk).
+
+2. **Crash on Verification in `XZZipper.Verify` ([xzzipper.go:27-29](file:///home/drusifer/Projects/zipmt/zipmt-go/zipmt/xzzipper.go#L27-29)):**
+   - **The Bug:** `if err != nil { err = reader.Verify() }` checks if there *is* an error, and if so, dereferences the invalid `reader` to call `.Verify()`, causing a nil-pointer panic. If there is *no* error, it completely skips validation and returns `nil`.
+   - **Resolution:** Check `if err != nil { return err }` and perform verification correctly.
+
+3. **Hardcoded Test Failure in `zipmt_test.go` ([zipmt_test.go:11](file:///home/drusifer/Projects/zipmt/zipmt-go/zipmt/zipmt_test.go#L11)):**
+   - **The Bug:** `TestZipMt` is hardcoded to fail with `t.Fatal("Wrong Answer")` because integration tests failed due to the copy-order bug.
