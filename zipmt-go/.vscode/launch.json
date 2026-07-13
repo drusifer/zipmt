@@ -1,0 +1,26 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {   "name": "RunVerify",
+            "type": "go",
+            "request": "launch",
+            "program":"${workspaceFolder}",
+            "args": ["-input", "C:\\Users\\drusi\\Downloads\\linux-6.3.tar.xz", "-algo", "xz", "-t"]
+        },
+        {   "name": "RunMain",
+            "type": "go",
+            "request": "launch",
+            "program":"${workspaceFolder}",
+            "args": ["-input", "C:\\Users\\drusi\\Downloads\\linux-6.3.tar", "-algo", "xz"]
+        },
+        {   "name": "RunHelp",
+            "type": "go",
+            "request": "launch",
+            "program":"${workspaceFolder}",
+            "args": ["--help"]
+        }
+    ]
+}
