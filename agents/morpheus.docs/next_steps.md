@@ -1,13 +1,14 @@
 # Next Steps
 
 ## Immediate Next Action
-None planned
+- Wait for Oracle's documentation grooming.
 
 ## Waiting On
-None
+- Oracle (@oracle) to groom implementation details into the project knowledge base and run `*ora groom`.
 
 ## Planned Work
-- [ ] No planned work
+- [ ] Receive documentation update confirmation from Oracle
+- [ ] Initiate next sprint planning
 
 ---
-*Last updated: [timestamp]*
+*Last updated: 2026-07-13T16:42:00*

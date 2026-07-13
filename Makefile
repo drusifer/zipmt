@@ -18,13 +18,16 @@ endif
 
 # ── Bob Protocol Targets ─────────────────────────────────────────────────────
 
-.PHONY: tldr test via_index install_bob update_bob pull_bob clean_bob diff_bob
+.PHONY: tldr test test-rust via_index install_bob update_bob pull_bob clean_bob diff_bob
 
 tldr: ## Show TL;DR summaries from all project files (quick orientation for agents)
 	@rg --no-heading "TLDR:" --glob "*.md" -N | sed 's|^\./||' | sort
 
 test: ## Run unit tests
 	@python -m unittest discover -s tests
+
+test-rust: ## Run Rust unit tests
+	@cd zipmt-rust && cargo test
 
 via_index: ## Build the via index required by the via MCP server
 	@via index "$(CURDIR)"
@@ -164,7 +167,7 @@ else
 #   make tldr V=-vv        stderr + filtered failures to terminal
 #   make tldr V=-vvv       stderr + full stdout to terminal
 
-.PHONY: help chat test via_index install_bob update_bob pull_bob clean_bob diff_bob
+.PHONY: help chat test test-rust via_index install_bob update_bob pull_bob clean_bob diff_bob
 
 install_bob: ## Copy agents into a project and set up skill links (usage: make install_bob TARGET=/path/to/project)
 	@$(MAKE) MKF_ACTIVE=1 install_bob TARGET="$(TARGET)"
@@ -214,6 +217,9 @@ chat: ## Post a message to CHAT.md (usage: make chat MSG="<msg>" [PERSONA="<name
 		$(if $(TO),--to "$(TO)")
 
 test: ## Run unit tests
+	@./agents/tools/mkf.py $(V) $@
+
+test-rust: ## Run Rust unit tests
 	@./agents/tools/mkf.py $(V) $@
 
 via_index: ## Build the via index required by the via MCP server

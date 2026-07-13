@@ -1,13 +1,14 @@
 # Next Steps
 
 ## Immediate Next Action
-- Wait for user feedback or commands.
+- Wait for Mouse's final sprint close.
 
 ## Waiting On
-- User review of updated summary filenames.
+- Mouse (@mouse) to verify task boards, compile final statistics, and run `*sprint close`.
 
 ## Planned Work
-- [ ] No planned work.
+- [ ] Receive sprint close notification from Mouse
+- [ ] Prepare archives of the sprint docs
 
 ---
-*Last updated: 2026-07-13T13:44:00*
+*Last updated: 2026-07-13T16:42:00*
