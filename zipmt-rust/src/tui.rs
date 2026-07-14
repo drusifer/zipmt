@@ -593,4 +593,34 @@ mod tests {
 
         insta::assert_snapshot!(clean_output);
     }
+
+    #[test]
+    fn test_tui_layout_split_overflow() {
+        // Test that if processed bytes exceed total_bytes, filled bar is capped and doesn't panic
+        let mut state = TuiState::new_split(1, 100 * 1024);
+        state.stripes[0].total_bytes = 100000;
+        state.stripes[0].bytes_processed = 120000; // 120%
+        state.stripes[0].bytes_written = 40000;
+
+        let mut buf = Vec::new();
+        // Should not panic due to index out of bounds or negative repeats
+        draw_tui(&state, &mut buf);
+        let output = String::from_utf8(buf).unwrap();
+        let clean_output = strip_ansi(&output);
+        assert!(clean_output.contains("120%"));
+    }
+
+    #[test]
+    fn test_tui_layout_stream_overflow() {
+        // Test that if queue_depth exceeds capacity, progress bar is capped and doesn't panic
+        let mut state = TuiState::new_stream(8, 0);
+        state.queue_depth = 12; // Exceeds cap (8)
+
+        let mut buf = Vec::new();
+        // Should not panic due to capacity overflow / subtraction underflow
+        draw_tui(&state, &mut buf);
+        let output = String::from_utf8(buf).unwrap();
+        let clean_output = strip_ansi(&output);
+        assert!(clean_output.contains("12/ 8 blk"));
+    }
 }
