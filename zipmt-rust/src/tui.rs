@@ -31,8 +31,11 @@ pub struct TuiState {
     pub bytes_written: usize,
     pub queue_depth: usize,
     pub queue_capacity: usize,
-    // Rolling speed history (max 30 values)
+    // Rolling speed history (max 35 values)
     pub speed_history: Vec<f64>,
+    // Terminal dimensions
+    pub terminal_cols: u16,
+    pub terminal_rows: u16,
 }
 
 impl TuiState {
@@ -57,6 +60,8 @@ impl TuiState {
             queue_depth: 0,
             queue_capacity: 0,
             speed_history: Vec::new(),
+            terminal_cols: 80,
+            terminal_rows: 24,
         }
     }
 
@@ -72,6 +77,8 @@ impl TuiState {
             queue_depth: 0,
             queue_capacity,
             speed_history: Vec::new(),
+            terminal_cols: 80,
+            terminal_rows: 24,
         }
     }
 }
@@ -95,37 +102,74 @@ impl Drop for TerminalGuard {
     }
 }
 
+fn query_initial_size() -> (u16, u16) {
+    if let (Ok(cols_str), Ok(rows_str)) = (std::env::var("COLUMNS"), std::env::var("LINES")) {
+        if let (Ok(cols), Ok(rows)) = (cols_str.parse::<u16>(), rows_str.parse::<u16>()) {
+            return (cols, rows);
+        }
+    }
+
+    // Try running tput cols and tput lines
+    if let Ok(output_cols) = std::process::Command::new("tput").arg("cols").output() {
+        if let Ok(output_lines) = std::process::Command::new("tput").arg("lines").output() {
+            let cols_str = String::from_utf8_lossy(&output_cols.stdout).trim().to_string();
+            let lines_str = String::from_utf8_lossy(&output_lines.stdout).trim().to_string();
+            if let (Ok(cols), Ok(rows)) = (cols_str.parse::<u16>(), lines_str.parse::<u16>()) {
+                return (cols, rows);
+            }
+        }
+    }
+
+    crossterm::terminal::size().unwrap_or((80, 24))
+}
+
 pub fn start_tui_thread(state: Arc<Mutex<TuiState>>) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let guard = TerminalGuard::new();
+
+        // Get initial terminal size
+        let (w, h) = query_initial_size();
+        {
+            let mut guard = state.lock().unwrap();
+            guard.terminal_cols = w;
+            guard.terminal_rows = h;
+        }
         
         loop {
-            // Listen for keypress events
+            // Listen for terminal events
             if event::poll(std::time::Duration::from_millis(0)).unwrap() {
-                if let Event::Key(key) = event::read().unwrap() {
-                    match key.code {
-                        KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
-                            // Cleanup output file and exit utility cleanly
-                            crate::cleanup_output_file();
-                            drop(guard);
-                            std::process::exit(2);
+                match event::read().unwrap() {
+                    Event::Key(key) => {
+                        match key.code {
+                            KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
+                                // Cleanup output file and exit utility cleanly
+                                crate::cleanup_output_file();
+                                drop(guard);
+                                std::process::exit(2);
+                            }
+                            KeyCode::Char('p') | KeyCode::Char('P') => {
+                                let current = crate::IS_PAUSED.load(Ordering::Relaxed);
+                                crate::IS_PAUSED.store(!current, Ordering::Relaxed);
+                            }
+                            KeyCode::Char('-') => {
+                                let current = crate::THROTTLE_DELAY_MS.load(Ordering::Relaxed);
+                                let new_val = std::cmp::min(current + 50, 500);
+                                crate::THROTTLE_DELAY_MS.store(new_val, Ordering::Relaxed);
+                            }
+                            KeyCode::Char('+') | KeyCode::Char('=') => {
+                                let current = crate::THROTTLE_DELAY_MS.load(Ordering::Relaxed);
+                                let new_val = current.saturating_sub(50);
+                                crate::THROTTLE_DELAY_MS.store(new_val, Ordering::Relaxed);
+                            }
+                            _ => {}
                         }
-                        KeyCode::Char('p') | KeyCode::Char('P') => {
-                            let current = crate::IS_PAUSED.load(Ordering::Relaxed);
-                            crate::IS_PAUSED.store(!current, Ordering::Relaxed);
-                        }
-                        KeyCode::Char('-') => {
-                            let current = crate::THROTTLE_DELAY_MS.load(Ordering::Relaxed);
-                            let new_val = std::cmp::min(current + 50, 500);
-                            crate::THROTTLE_DELAY_MS.store(new_val, Ordering::Relaxed);
-                        }
-                        KeyCode::Char('+') | KeyCode::Char('=') => {
-                            let current = crate::THROTTLE_DELAY_MS.load(Ordering::Relaxed);
-                            let new_val = current.saturating_sub(50);
-                            crate::THROTTLE_DELAY_MS.store(new_val, Ordering::Relaxed);
-                        }
-                        _ => {}
                     }
+                    Event::Resize(w, h) => {
+                        let mut state_guard = state.lock().unwrap();
+                        state_guard.terminal_cols = w;
+                        state_guard.terminal_rows = h;
+                    }
+                    _ => {}
                 }
             }
 
@@ -146,7 +190,7 @@ pub fn start_tui_thread(state: Arc<Mutex<TuiState>>) -> std::thread::JoinHandle<
 
                 if !crate::IS_PAUSED.load(Ordering::Relaxed) {
                     state_guard.speed_history.push(speed);
-                    if state_guard.speed_history.len() > 30 {
+                    if state_guard.speed_history.len() > 35 {
                         state_guard.speed_history.remove(0);
                     }
                 }
@@ -170,7 +214,7 @@ fn render_history_chart(history: &[f64], height: usize) -> Vec<String> {
     let mut chart_lines = vec![String::new(); height];
     if history.is_empty() {
         for line in chart_lines.iter_mut() {
-            *line = " ".repeat(30);
+            *line = " ".repeat(35);
         }
         return chart_lines;
     }
@@ -180,7 +224,7 @@ fn render_history_chart(history: &[f64], height: usize) -> Vec<String> {
 
     for r in 0..height {
         let mut row_str = String::new();
-        let padding = 30usize.saturating_sub(history.len());
+        let padding = 35usize.saturating_sub(history.len());
         row_str.push_str(&" ".repeat(padding));
 
         for &val in history {
@@ -240,7 +284,7 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
 
     match state.mode {
         TuiMode::Split => {
-            lines.push(format!("{}┌─── LCARS COMMAND PANEL ─ [ SYSTEM: ACTIVE ] ──────────────────────────┐{}", orange, reset));
+            lines.push(format!("{}┌─── LCARS COMMAND PANEL ─ [ SYSTEM: ACTIVE ] ─────────────────────────────────┐{}", orange, reset));
 
             let mut total_in = 0;
             let mut total_out = 0;
@@ -274,38 +318,52 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
                 1.0
             };
 
-            lines.push(format!(
-                "{}│ {}Ingested : {}{:7.2} MB / {:7.2} MB    {}│ {}Speed: {}{:5.1} MB/s                     {}│{}",
-                orange,
-                cyan,
-                yellow,
+            let left_str = format!(
+                "Ingested : {:7.2} MB / {:7.2} MB    ",
                 total_in as f64 / (1024.0 * 1024.0),
-                state.total_input_size as f64 / (1024.0 * 1024.0),
+                state.total_input_size as f64 / (1024.0 * 1024.0)
+            );
+            let right_str = format!(
+                "Speed: {:5.1} MB/s                  ",
+                speed / (1024.0 * 1024.0)
+            );
+            lines.push(format!(
+                "{}│ {}{}{} │ {}{}{} │{}",
                 orange,
                 cyan,
-                yellow,
-                speed / (1024.0 * 1024.0),
+                left_str,
+                orange,
+                cyan,
+                right_str,
                 orange,
                 reset
             ));
-            lines.push(format!(
-                "{}│ {}Output   : {}{:7.2} MB ({:5.2}x Ratio)  {}│ {}Time : {}{:5.1}s (ETA: {:<12})     {}│{}",
-                orange,
-                cyan,
-                yellow,
+
+            let left_str_2 = format!(
+                "Output   : {:7.2} MB ({:5.2}x Ratio)  ",
                 total_out as f64 / (1024.0 * 1024.0),
-                ratio,
+                ratio
+            );
+            let right_str_2 = format!(
+                "Time : {:5.1}s (ETA: {:<12})     ",
+                elapsed,
+                eta_str
+            );
+            lines.push(format!(
+                "{}│ {}{}{} │ {}{}{} │{}",
                 orange,
                 cyan,
-                yellow,
-                elapsed,
-                eta_str,
+                left_str_2,
+                orange,
+                cyan,
+                right_str_2,
                 orange,
                 reset
             ));
-            lines.push(format!("{}├───────────────────────────────────────┬───────────────────────────────┤{}", orange, reset));
+
+            lines.push(format!("{}├───────────────────────────────────────┬──────────────────────────────────────┤{}", orange, reset));
             lines.push(format!(
-                "{}│ {}STRIPE SECTORS PROGRESS             {}│ {}INGEST SPEED HISTORY (30s)    {}│{}",
+                "{}│ {}STRIPE SECTORS PROGRESS             {}│ {}INGEST SPEED HISTORY (35s)    {}│{}",
                 orange,
                 purple,
                 orange,
@@ -335,27 +393,23 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
                         1.0
                     };
                     format!(
-                        "{}Sec {:02}: {}[{}] {}{:3.0}% {}({:4.1}x)",
-                        cyan,
+                        "Sec {:02}: [{}] {:3.0}% ({:4.1}x) ",
                         stripe.id,
-                        purple,
                         bar,
-                        yellow,
                         pct,
-                        purple,
                         stripe_ratio
                     )
                 } else {
-                    " ".repeat(37)
+                    " ".repeat(38)
                 };
 
                 let right_str = &chart_lines[r];
 
                 lines.push(format!(
-                    "{}│ {}{:<37} {}│ {}{} {}│{}",
+                    "{}│ {}{}{} │ {}{} {}│{}",
                     orange,
+                    cyan,
                     left_str,
-                    reset,
                     orange,
                     yellow,
                     right_str,
@@ -364,29 +418,40 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
                 ));
             }
 
-            lines.push(format!("{}├───────────────────────────────────────┼───────────────────────────────┤{}", orange, reset));
+            lines.push(format!("{}├───────────────────────────────────────┼──────────────────────────────────────┤{}", orange, reset));
+            
+            let control_left_1 = "CONTROLS: [P] Pause  [-] Slow Down    ";
+            let control_right_1 = format!("STATUS: THROTTLE: {:3}ms            ", throttle_delay);
             lines.push(format!(
-                "{}│ {}CONTROLS: [P] Pause  [-] Slow Down  {}│ {}STATUS: THROTTLE: {:3}ms    {}│{}",
+                "{}│ {}{}{} │ {}{}{} │{}",
                 orange,
                 purple,
+                control_left_1,
                 orange,
                 purple,
-                throttle_delay,
+                control_right_1,
                 orange,
                 reset
             ));
+
+            let control_left_2 = "          [+] Speed Up  [Q] Abort     ";
+            let control_right_2 = format!("        STATE   : {:7}           ", pause_status);
             lines.push(format!(
-                "{}│           [+] Speed Up  [Q] Abort     {}│         STATE   : {}     {}│{}",
+                "{}│ {}{}{} │ {}{}{} │{}",
                 orange,
                 orange,
-                pause_status,
+                control_left_2,
+                orange,
+                orange,
+                control_right_2,
                 orange,
                 reset
             ));
-            lines.push(format!("{}╰───────────────────────────────────────┴───────────────────────────────╯{}", orange, reset));
+
+            lines.push(format!("{}╰───────────────────────────────────────┴──────────────────────────────────────╯{}", orange, reset));
         }
         TuiMode::Stream => {
-            lines.push(format!("{}┌─── LCARS COMMAND PANEL ─ [ SYSTEM: ACTIVE ] ──────────────────────────┐{}", orange, reset));
+            lines.push(format!("{}┌─── LCARS COMMAND PANEL ─ [ SYSTEM: ACTIVE ] ─────────────────────────────────┐{}", orange, reset));
 
             let speed_in = if elapsed > 0.0 {
                 state.bytes_read as f64 / elapsed
@@ -409,36 +474,50 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
             let proj_5m = speed_in * 300.0;
             let proj_10m = speed_in * 600.0;
 
+            let left_str = format!(
+                "Ingested : {:7.2} MB                 ",
+                state.bytes_read as f64 / (1024.0 * 1024.0)
+            );
+            let right_str = format!(
+                "Speed: {:5.1} MB/s                  ",
+                speed_in / (1024.0 * 1024.0)
+            );
             lines.push(format!(
-                "{}│ {}Ingested : {}{:7.2} MB                 {}│ {}Speed: {}{:5.1} MB/s                     {}│{}",
+                "{}│ {}{}{} │ {}{}{} │{}",
                 orange,
                 cyan,
-                yellow,
-                state.bytes_read as f64 / (1024.0 * 1024.0),
+                left_str,
                 orange,
                 cyan,
-                yellow,
-                speed_in / (1024.0 * 1024.0),
+                right_str,
                 orange,
                 reset
             ));
-            lines.push(format!(
-                "{}│ {}Output   : {}{:7.2} MB ({:5.2}x Ratio)  {}│ {}Speed: {}{:5.1} MB/s                     {}│{}",
-                orange,
-                cyan,
-                yellow,
+
+            let left_str_2 = format!(
+                "Output   : {:7.2} MB ({:5.2}x Ratio)  ",
                 state.bytes_written as f64 / (1024.0 * 1024.0),
-                ratio,
+                ratio
+            );
+            let right_str_2 = format!(
+                "Speed: {:5.1} MB/s                  ",
+                speed_out / (1024.0 * 1024.0)
+            );
+            lines.push(format!(
+                "{}│ {}{}{} │ {}{}{} │{}",
                 orange,
                 cyan,
-                yellow,
-                speed_out / (1024.0 * 1024.0),
+                left_str_2,
+                orange,
+                cyan,
+                right_str_2,
                 orange,
                 reset
             ));
-            lines.push(format!("{}├───────────────────────────────────────┬───────────────────────────────┤{}", orange, reset));
+
+            lines.push(format!("{}├───────────────────────────────────────┬──────────────────────────────────────┤{}", orange, reset));
             lines.push(format!(
-                "{}│ {}TRANSPORTER BUFFER CAPACITY          {}│ {}INGEST SPEED HISTORY (30s)    {}│{}",
+                "{}│ {}TRANSPORTER BUFFER CAPACITY          {}│ {}INGEST SPEED HISTORY (35s)    {}│{}",
                 orange,
                 purple,
                 orange,
@@ -460,31 +539,28 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
                         .chain(std::iter::repeat('░').take(bar_len - filled))
                         .collect();
                     format!(
-                        "{}Buffer: {}[{}] {}{:2}/{:2} blk  ",
-                        cyan,
-                        purple,
+                        "Buffer: [{}] {:2}/{:2} blk   ",
                         bar,
-                        yellow,
                         depth,
                         cap
                     )
                 } else if r == 2 {
-                    format!("{}1m Ingest Target : {}{:8.1} MB  ", cyan, yellow, proj_1m / (1024.0 * 1024.0))
+                    format!("1m Ingest Target : {:8.1} MB        ", proj_1m / (1024.0 * 1024.0))
                 } else if r == 3 {
-                    format!("{}5m Ingest Target : {}{:8.1} MB  ", cyan, yellow, proj_5m / (1024.0 * 1024.0))
+                    format!("5m Ingest Target : {:8.1} MB        ", proj_5m / (1024.0 * 1024.0))
                 } else if r == 4 {
-                    format!("{}10m Ingest Target: {}{:8.1} MB  ", cyan, yellow, proj_10m / (1024.0 * 1024.0))
+                    format!("10m Ingest Target: {:8.1} MB        ", proj_10m / (1024.0 * 1024.0))
                 } else {
-                    " ".repeat(37)
+                    " ".repeat(38)
                 };
 
                 let right_str = &chart_lines[r];
 
                 lines.push(format!(
-                    "{}│ {}{:<37} {}│ {}{} {}│{}",
+                    "{}│ {}{}{} │ {}{} {}│{}",
                     orange,
+                    cyan,
                     left_str,
-                    reset,
                     orange,
                     yellow,
                     right_str,
@@ -493,36 +569,44 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
                 ));
             }
 
-            lines.push(format!("{}├───────────────────────────────────────┼───────────────────────────────┤{}", orange, reset));
+            lines.push(format!("{}├───────────────────────────────────────┼──────────────────────────────────────┤{}", orange, reset));
+            
+            let control_left_1 = "CONTROLS: [P] Pause  [-] Slow Down    ";
+            let control_right_1 = format!("STATUS: THROTTLE: {:3}ms            ", throttle_delay);
             lines.push(format!(
-                "{}│ {}CONTROLS: [P] Pause  [-] Slow Down  {}│ {}STATUS: THROTTLE: {:3}ms    {}│{}",
+                "{}│ {}{}{} │ {}{}{} │{}",
                 orange,
                 purple,
+                control_left_1,
                 orange,
                 purple,
-                throttle_delay,
+                control_right_1,
                 orange,
                 reset
             ));
+
+            let control_left_2 = "          [+] Speed Up  [Q] Abort     ";
+            let control_right_2 = format!("        STATE   : {:7}           ", pause_status);
             lines.push(format!(
-                "{}│           [+] Speed Up  [Q] Abort     {}│         STATE   : {}     {}│{}",
+                "{}│ {}{}{} │ {}{}{} │{}",
                 orange,
                 orange,
-                pause_status,
+                control_left_2,
+                orange,
+                orange,
+                control_right_2,
                 orange,
                 reset
             ));
-            lines.push(format!("{}╰───────────────────────────────────────┴───────────────────────────────╯{}", orange, reset));
+
+            lines.push(format!("{}╰───────────────────────────────────────┴──────────────────────────────────────╯{}", orange, reset));
         }
     }
 
-    // Centering calculation
-    #[cfg(test)]
-    let (cols, rows) = (80, 24);
-    #[cfg(not(test))]
-    let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
+    let cols = state.terminal_cols;
+    let rows = state.terminal_rows;
 
-    let pad_left = (cols as usize).saturating_sub(78) / 2;
+    let pad_left = (cols as usize).saturating_sub(80) / 2;
     let pad_top = (rows as usize).saturating_sub(16) / 2;
 
     // Reset cursor to home position and clear screen

@@ -6,18 +6,18 @@ expression: clean_output
 
 
 
- ┌─── LCARS COMMAND PANEL ─ [ SYSTEM: ACTIVE ] ──────────────────────────┐
- │ Ingested :   50.00 MB                 │ Speed:  40.5 MB/s                     │
- │ Output   :   20.00 MB ( 2.50x Ratio)  │ Speed:  16.2 MB/s                     │
- ├───────────────────────────────────────┬───────────────────────────────┤
- │ TRANSPORTER BUFFER CAPACITY          │ INGEST SPEED HISTORY (30s)    │
- │ Buffer: [█████░░░░░░░░░░]  3/ 8 blk                                    │                             ▃█ │
- │                                                                        │                            ▆██ │
- │ 1m Ingest Target :   2431.1 MB                                    │                          ▃████ │
- │ 5m Ingest Target :  12155.6 MB                                    │                         ▆█████ │
- │ 10m Ingest Target:  24311.2 MB                                    │                       ▃███████ │
- │                                                                        │                      ▆████████ │
- ├───────────────────────────────────────┼───────────────────────────────┤
- │ CONTROLS: [P] Pause  [-] Slow Down  │ STATUS: THROTTLE:   0ms    │
- │           [+] Speed Up  [Q] Abort     │         STATE   : RUNNING     │
- ╰───────────────────────────────────────┴───────────────────────────────╯
+┌─── LCARS COMMAND PANEL ─ [ SYSTEM: ACTIVE ] ─────────────────────────────────┐
+│ Ingested :   50.00 MB                  │ Speed:  40.5 MB/s                   │
+│ Output   :   20.00 MB ( 2.50x Ratio)   │ Speed:  16.2 MB/s                   │
+├───────────────────────────────────────┬──────────────────────────────────────┤
+│ TRANSPORTER BUFFER CAPACITY          │ INGEST SPEED HISTORY (35s)    │
+│ Buffer: [█████░░░░░░░░░░]  3/ 8 blk    │                                  ▃█ │
+│                                        │                                 ▆██ │
+│ 1m Ingest Target :   2431.1 MB         │                               ▃████ │
+│ 5m Ingest Target :  12155.6 MB         │                              ▆█████ │
+│ 10m Ingest Target:  24311.2 MB         │                            ▃███████ │
+│                                        │                           ▆████████ │
+├───────────────────────────────────────┼──────────────────────────────────────┤
+│ CONTROLS: [P] Pause  [-] Slow Down     │ STATUS: THROTTLE:   0ms             │
+│           [+] Speed Up  [Q] Abort      │         STATE   : RUNNING            │
+╰───────────────────────────────────────┴──────────────────────────────────────╯
