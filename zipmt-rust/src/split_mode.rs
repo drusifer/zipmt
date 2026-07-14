@@ -66,12 +66,19 @@ pub fn compress_file(
             .into_par_iter()
             .enumerate()
             .map(|(i, chunk)| {
-                let res = compressor.compress(chunk);
+                let tui_ref = tui_state_ref.clone();
+                let res = compressor.compress_with_progress(chunk, &|bytes| {
+                    if let Some(ref tui) = tui_ref {
+                        let mut guard = tui.lock().unwrap();
+                        if i < guard.stripes.len() {
+                            guard.stripes[i].bytes_processed += bytes;
+                        }
+                    }
+                });
                 if let Some(ref tui) = tui_state_ref {
                     if let Ok(ref compressed) = res {
                         let mut guard = tui.lock().unwrap();
                         if i < guard.stripes.len() {
-                            guard.stripes[i].bytes_processed = chunk.len();
                             guard.stripes[i].bytes_written = compressed.len();
                         }
                     }

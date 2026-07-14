@@ -34,7 +34,12 @@ impl From<std::io::Error> for ZipError {
 
 pub trait Compressor: Send + Sync {
     /// Compresses input bytes.
-    fn compress(&self, input: &[u8]) -> Result<Vec<u8>, ZipError>;
+    fn compress(&self, input: &[u8]) -> Result<Vec<u8>, ZipError> {
+        self.compress_with_progress(input, &|_| {})
+    }
+
+    /// Compresses input bytes with a progress callback.
+    fn compress_with_progress(&self, input: &[u8], on_progress: &(dyn Fn(usize) + Send + Sync)) -> Result<Vec<u8>, ZipError>;
 
     /// Decompresses input bytes to verify integrity, returning an error on corruption.
     fn verify(&self, input: &[u8]) -> Result<(), ZipError>;
@@ -44,9 +49,13 @@ pub trait Compressor: Send + Sync {
 pub struct GzipCompressor;
 
 impl Compressor for GzipCompressor {
-    fn compress(&self, input: &[u8]) -> Result<Vec<u8>, ZipError> {
+    fn compress_with_progress(&self, input: &[u8], on_progress: &(dyn Fn(usize) + Send + Sync)) -> Result<Vec<u8>, ZipError> {
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(input)?;
+        let chunk_size = 64 * 1024;
+        for chunk in input.chunks(chunk_size) {
+            encoder.write_all(chunk)?;
+            on_progress(chunk.len());
+        }
         let result = encoder.finish()?;
         Ok(result)
     }
@@ -65,9 +74,13 @@ impl Compressor for GzipCompressor {
 pub struct Bzip2Compressor;
 
 impl Compressor for Bzip2Compressor {
-    fn compress(&self, input: &[u8]) -> Result<Vec<u8>, ZipError> {
+    fn compress_with_progress(&self, input: &[u8], on_progress: &(dyn Fn(usize) + Send + Sync)) -> Result<Vec<u8>, ZipError> {
         let mut encoder = BzEncoder::new(Vec::new(), bzip2::Compression::default());
-        encoder.write_all(input)?;
+        let chunk_size = 64 * 1024;
+        for chunk in input.chunks(chunk_size) {
+            encoder.write_all(chunk)?;
+            on_progress(chunk.len());
+        }
         let result = encoder.finish()?;
         Ok(result)
     }
@@ -86,10 +99,13 @@ impl Compressor for Bzip2Compressor {
 pub struct XzCompressor;
 
 impl Compressor for XzCompressor {
-    fn compress(&self, input: &[u8]) -> Result<Vec<u8>, ZipError> {
-        // level 6 is standard default for xz
+    fn compress_with_progress(&self, input: &[u8], on_progress: &(dyn Fn(usize) + Send + Sync)) -> Result<Vec<u8>, ZipError> {
         let mut encoder = XzEncoder::new(Vec::new(), 6);
-        encoder.write_all(input)?;
+        let chunk_size = 64 * 1024;
+        for chunk in input.chunks(chunk_size) {
+            encoder.write_all(chunk)?;
+            on_progress(chunk.len());
+        }
         let result = encoder.finish()?;
         Ok(result)
     }
