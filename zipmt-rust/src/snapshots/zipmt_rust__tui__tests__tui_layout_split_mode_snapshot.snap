@@ -1,0 +1,11 @@
+---
+source: src/tui.rs
+expression: clean_output
+---
+=== [zipmt-rust] Concurrency Progress (Split Mode) ===
+Stripe  0: [====================] 100% | In:  100.00KB, Out:   40.00KB (2.50x)
+Stripe  1: [==========          ]  50% | In:   50.00KB, Out:   20.00KB (2.50x)
+Stripe  2: [                    ]   0% | In:    0.00KB, Out:    0.00KB (1.00x)
+Stripe  3: [=====               ]  25% | In:   25.00KB, Out:   10.00KB (2.50x)
+--------------------------------------------------
+Total In: 0.17MB | Out: 0.07MB | Speed: 0.1MB/s | Ratio: 2.50x

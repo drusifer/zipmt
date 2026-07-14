@@ -1,16 +1,16 @@
 # Next Steps
 
 ## Immediate Next Action
-- Implement TUI CLI options, `TuiState` structure, and rendering module.
+- Refactor TUI drawing and add dependencies to `Cargo.toml`.
 
 ## Waiting On
 None
 
 ## Planned Work
-- [ ] Implement CLI integration and `TuiState` in `src/main.rs` and a new `src/tui.rs`
-- [ ] Connect Split/Stream pipelines to `TuiState` updates
-- [ ] Run `make test-rust` and verify integration UAT
-- [ ] Save state files and hand off to Trin (@trin) for UAT
+- [ ] Refactor `draw_tui` signature
+- [ ] Add dev-dependencies to `Cargo.toml`
+- [ ] Implement snapshot tests and verify
+- [ ] Save state files and hand off to Trin (@trin)
 
 ---
-*Last updated: 2026-07-13T19:57:56*
+*Last updated: 2026-07-13T20:07:58*

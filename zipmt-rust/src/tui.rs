@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -72,7 +73,9 @@ pub fn start_tui_thread(state: Arc<Mutex<TuiState>>) -> std::thread::JoinHandle<
         loop {
             let is_complete = {
                 let guard = state.lock().unwrap();
-                draw_tui(&guard);
+                let mut stderr = std::io::stderr();
+                draw_tui(&guard, &mut stderr);
+                let _ = stderr.flush();
                 guard.is_complete
             };
 
@@ -87,15 +90,19 @@ pub fn start_tui_thread(state: Arc<Mutex<TuiState>>) -> std::thread::JoinHandle<
     })
 }
 
-fn draw_tui(state: &TuiState) {
+pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
     // Reset cursor to home position
-    eprint!("\x1B[H");
+    let _ = write!(target, "\x1B[H");
 
+    // Standardized/mockable elapsed time for layout consistency in tests
+    #[cfg(test)]
+    let elapsed = 1.234;
+    #[cfg(not(test))]
     let elapsed = state.start_time.elapsed().as_secs_f64();
 
     match state.mode {
         TuiMode::Split => {
-            eprintln!("=== [zipmt-rust] Concurrency Progress (Split Mode) ===");
+            let _ = writeln!(target, "=== [zipmt-rust] Concurrency Progress (Split Mode) ===");
             let mut total_in = 0;
             let mut total_out = 0;
 
@@ -119,7 +126,8 @@ fn draw_tui(state: &TuiState) {
                     1.0
                 };
 
-                eprintln!(
+                let _ = writeln!(
+                    target,
                     "Stripe {:2}: [{}] {:3.0}% | In: {:7.2}KB, Out: {:7.2}KB ({:.2}x)",
                     stripe.id,
                     bar,
@@ -145,8 +153,9 @@ fn draw_tui(state: &TuiState) {
                 1.0
             };
 
-            eprintln!("--------------------------------------------------");
-            eprintln!(
+            let _ = writeln!(target, "--------------------------------------------------");
+            let _ = writeln!(
+                target,
                 "Total In: {:.2}MB | Out: {:.2}MB | Speed: {:.1}MB/s | Ratio: {:.2}x",
                 total_in as f64 / (1024.0 * 1024.0),
                 total_out as f64 / (1024.0 * 1024.0),
@@ -155,7 +164,7 @@ fn draw_tui(state: &TuiState) {
             );
         }
         TuiMode::Stream => {
-            eprintln!("=== [zipmt-rust] Pipeline Stream Progress (Stream Mode) ===");
+            let _ = writeln!(target, "=== [zipmt-rust] Pipeline Stream Progress (Stream Mode) ===");
 
             let cap = state.queue_capacity;
             let depth = state.queue_depth;
@@ -167,7 +176,7 @@ fn draw_tui(state: &TuiState) {
                 .chain(std::iter::repeat(' ').take(bar_len - filled))
                 .collect();
 
-            eprintln!("Queue Capacity: [{}] {}/{} blocks in transit", bar, depth, cap);
+            let _ = writeln!(target, "Queue Capacity: [{}] {}/{} blocks in transit", bar, depth, cap);
 
             let speed_in = if elapsed > 0.0 {
                 (state.bytes_read as f64 / (1024.0 * 1024.0)) / elapsed
@@ -186,12 +195,65 @@ fn draw_tui(state: &TuiState) {
                 1.0
             };
 
-            eprintln!("--------------------------------------------------");
-            eprintln!("Throughput:");
-            eprintln!("  - Read : {:7.2}MB ({:5.2}MB/s)", state.bytes_read as f64 / (1024.0 * 1024.0), speed_in);
-            eprintln!("  - Write: {:7.2}MB ({:5.2}MB/s)", state.bytes_written as f64 / (1024.0 * 1024.0), speed_out);
-            eprintln!("Compression Ratio: {:.2}x", ratio);
-            eprintln!("Elapsed Time: {:.1}s", elapsed);
+            let _ = writeln!(target, "--------------------------------------------------");
+            let _ = writeln!(target, "Throughput:");
+            let _ = writeln!(target, "  - Read : {:7.2}MB ({:5.2}MB/s)", state.bytes_read as f64 / (1024.0 * 1024.0), speed_in);
+            let _ = writeln!(target, "  - Write: {:7.2}MB ({:5.2}MB/s)", state.bytes_written as f64 / (1024.0 * 1024.0), speed_out);
+            let _ = writeln!(target, "Compression Ratio: {:.2}x", ratio);
+            let _ = writeln!(target, "Elapsed Time: {:.1}s", elapsed);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn strip_ansi(input: &str) -> String {
+        let re = regex::Regex::new(r"\x1B\[[0-9;]*[a-zA-Z]").unwrap();
+        re.replace_all(input, "").into_owned()
+    }
+
+    #[test]
+    fn test_tui_layout_split_mode_snapshot() {
+        let mut state = TuiState::new_split(4);
+        // Pre-populate some progress values
+        state.stripes[0].total_bytes = 102400;
+        state.stripes[0].bytes_processed = 102400; // 100%
+        state.stripes[0].bytes_written = 40960;
+
+        state.stripes[1].total_bytes = 102400;
+        state.stripes[1].bytes_processed = 51200; // 50%
+        state.stripes[1].bytes_written = 20480;
+
+        state.stripes[2].total_bytes = 102400;
+        state.stripes[2].bytes_processed = 0; // 0%
+        state.stripes[2].bytes_written = 0;
+
+        state.stripes[3].total_bytes = 102400;
+        state.stripes[3].bytes_processed = 25600; // 25%
+        state.stripes[3].bytes_written = 10240;
+
+        let mut buf = Vec::new();
+        draw_tui(&state, &mut buf);
+        let output = String::from_utf8(buf).unwrap();
+        let clean_output = strip_ansi(&output);
+
+        insta::assert_snapshot!(clean_output);
+    }
+
+    #[test]
+    fn test_tui_layout_stream_mode_snapshot() {
+        let mut state = TuiState::new_stream(8);
+        state.bytes_read = 50 * 1024 * 1024; // 50MB
+        state.bytes_written = 20 * 1024 * 1024; // 20MB
+        state.queue_depth = 3;
+
+        let mut buf = Vec::new();
+        draw_tui(&state, &mut buf);
+        let output = String::from_utf8(buf).unwrap();
+        let clean_output = strip_ansi(&output);
+
+        insta::assert_snapshot!(clean_output);
     }
 }

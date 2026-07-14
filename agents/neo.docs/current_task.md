@@ -2,24 +2,21 @@
 
 **Status:** In Progress
 **Assigned to:** Neo
-**Started:** 2026-07-13T19:57:56
+**Started:** 2026-07-13T20:07:58
 
 ## Task Description
-Implement Phase 1, Phase 2, and Phase 3 of the `zipmt-rust` TUI progress visualizer:
-- Task 1.1: Integrate `--tui` / `-T` flag in CLI.
-- Task 1.2: Build shared `TuiState` structure.
-- Task 2.1: Implement Stripe Progress callbacks in Split Mode.
-- Task 2.2: Renders split progress bar visualizer.
-- Task 3.1 & 3.2: Implement queue depth, speeds, and Stream Mode display.
-- Task 3.3: Integration tests.
+Implement Phase 1 and Phase 2 of TUI testing:
+- Task 1.1: Refactor `draw_tui` to accept output target.
+- Task 1.2: Add `insta` and `regex` to `Cargo.toml` dev-dependencies.
+- Task 2.1: Write snapshot unit tests.
 
 ## Progress
-- [ ] Add CLI flag and suppress standard logging in TUI mode
-- [ ] Create `src/tui.rs` with `TuiState` structure and redraw loops
-- [ ] Connect Split Mode and Stream Mode to TUI progress metrics
-- [ ] Run verification tests
+- [ ] Refactor `draw_tui` signature and replace prints
+- [ ] Update `Cargo.toml` dev-dependencies
+- [ ] Implement snapshot unit tests
+- [ ] Run `cargo test` to record snapshots
 - [ ] Update state files (context, next_steps)
-- [ ] Hand off to Trin for QA verification
+- [ ] Hand off to Trin for UAT
 
 ## Blockers
 None
@@ -28,4 +25,4 @@ None
 None yet
 
 ---
-*Last updated: 2026-07-13T19:57:56*
+*Last updated: 2026-07-13T20:07:58*

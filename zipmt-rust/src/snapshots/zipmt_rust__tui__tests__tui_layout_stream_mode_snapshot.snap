@@ -1,0 +1,12 @@
+---
+source: src/tui.rs
+expression: clean_output
+---
+=== [zipmt-rust] Pipeline Stream Progress (Stream Mode) ===
+Queue Capacity: [=======             ] 3/8 blocks in transit
+--------------------------------------------------
+Throughput:
+  - Read :   50.00MB (40.52MB/s)
+  - Write:   20.00MB (16.21MB/s)
+Compression Ratio: 2.50x
+Elapsed Time: 1.2s
