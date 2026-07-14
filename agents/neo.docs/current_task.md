@@ -1,24 +1,25 @@
 # Current Task
 
-**Status:** Completed
+**Status:** In Progress
 **Assigned to:** Neo
-**Started:** 2026-07-13T16:39:33
-**Finished:** 2026-07-13T16:41:00
+**Started:** 2026-07-13T19:57:56
 
 ## Task Description
-Implement Phase 3 of the `zipmt-rust` parallel compression utility:
-- Task 3.1: Integrate `clap` CLI parser, implement Ctrl-C signal handlers, and establish standard file-preservation defaults.
-- Task 3.2: Build the `--test` decompression verification mode ensuring graceful error handling without panics.
-- Task 3.3: Add comprehensive integration tests running the built binary against sample files and standard input streams.
+Implement Phase 1, Phase 2, and Phase 3 of the `zipmt-rust` TUI progress visualizer:
+- Task 1.1: Integrate `--tui` / `-T` flag in CLI.
+- Task 1.2: Build shared `TuiState` structure.
+- Task 2.1: Implement Stripe Progress callbacks in Split Mode.
+- Task 2.2: Renders split progress bar visualizer.
+- Task 3.1 & 3.2: Implement queue depth, speeds, and Stream Mode display.
+- Task 3.3: Integration tests.
 
 ## Progress
-- [x] Implement CLI argument parsing via `clap` in `src/main.rs`
-- [x] Implement signal hooking (Ctrl-C safety) and file deletion cleanup on abort
-- [x] Implement verification logic (`--test` mode) in `src/main.rs`
-- [x] Write integration test suites in `tests/`
-- [x] Verify everything compiles and runs via `make test-rust`
-- [x] Update Neo state files (context, next_steps)
-- [x] Hand off to Trin for QA verification
+- [ ] Add CLI flag and suppress standard logging in TUI mode
+- [ ] Create `src/tui.rs` with `TuiState` structure and redraw loops
+- [ ] Connect Split Mode and Stream Mode to TUI progress metrics
+- [ ] Run verification tests
+- [ ] Update state files (context, next_steps)
+- [ ] Hand off to Trin for QA verification
 
 ## Blockers
 None
@@ -27,4 +28,4 @@ None
 None yet
 
 ---
-*Last updated: 2026-07-13T16:41:00*
+*Last updated: 2026-07-13T19:57:56*

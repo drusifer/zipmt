@@ -23,6 +23,7 @@ pub fn compress_stream(
     output: &mut dyn Write,
     compressor: &(dyn Compressor + Send + Sync),
     num_threads: usize,
+    tui_state: Option<Arc<Mutex<crate::tui::TuiState>>>,
 ) -> Result<(), ZipError> {
     let pool_size = if num_threads > 0 { num_threads } else { num_threads_default() };
     crate::log_verbose!("Starting pipeline stream compression with pool size: {}", pool_size);
@@ -34,6 +35,9 @@ pub fn compress_stream(
     let job_rx = Arc::new(Mutex::new(job_rx));
 
     // Use scoped threads to safely pass non-static references across thread boundaries
+    let tui_state_ref1 = tui_state.clone();
+    let tui_state_ref2 = tui_state.clone();
+    let tui_state_ref3 = tui_state.clone();
     let scope_res = thread::scope(|s| {
         let mut workers = Vec::new();
 
@@ -41,6 +45,7 @@ pub fn compress_stream(
         for worker_id in 0..pool_size {
             let job_rx = Arc::clone(&job_rx);
             let result_tx = result_tx.clone();
+            let tui_ref = tui_state_ref1.clone();
             
             let handle = s.spawn(move || {
                 crate::log_verbose!("Worker thread {} started", worker_id);
@@ -52,6 +57,13 @@ pub fn compress_stream(
 
                     match block_opt {
                         Some(block) => {
+                            // Update queue depth on block take
+                            if let Some(ref tui) = tui_ref {
+                                let mut guard = tui.lock().unwrap();
+                                if guard.queue_depth > 0 {
+                                    guard.queue_depth -= 1;
+                                }
+                            }
                             crate::log_verbose!("Worker {} compressing block {}", worker_id, block.seq_num);
                             let compressed = compressor.compress(&block.data);
                             let compressed_len = compressed.as_ref().map(|v| v.len()).unwrap_or(0);
@@ -82,6 +94,7 @@ pub fn compress_stream(
         drop(result_tx);
 
         // Spawn reader thread
+        let tui_ref_reader = tui_state_ref2.clone();
         let reader_handle = s.spawn(move || -> Result<(), ZipError> {
             crate::log_verbose!("Reader thread started. Buffer block size: {}MB", BLOCK_SIZE / (1024 * 1024));
             let mut buffer = vec![0u8; BLOCK_SIZE];
@@ -101,6 +114,13 @@ pub fn compress_stream(
                     break;
                 }
 
+                // Update bytes read and queue depth
+                if let Some(ref tui) = tui_ref_reader {
+                    let mut guard = tui.lock().unwrap();
+                    guard.bytes_read += bytes_read;
+                    guard.queue_depth += 1;
+                }
+
                 crate::log_verbose!("Reader queued block {} ({} bytes)", seq_num, bytes_read);
                 let block = Block {
                     seq_num,
@@ -117,6 +137,7 @@ pub fn compress_stream(
         });
 
         // Writer logic (runs on main thread within the scope)
+        let tui_ref_writer = tui_state_ref3.clone();
         let mut pending_blocks = BTreeMap::new();
         let mut next_seq_num = 0u64;
         let mut compression_error = None;
@@ -135,6 +156,11 @@ pub fn compress_stream(
 
             while let Some(data) = pending_blocks.remove(&next_seq_num) {
                 crate::log_verbose!("Writer flushing block {} ({} bytes) to output", next_seq_num, data.len());
+                // Update bytes written
+                if let Some(ref tui) = tui_ref_writer {
+                    let mut guard = tui.lock().unwrap();
+                    guard.bytes_written += data.len();
+                }
                 output.write_all(&data)?;
                 next_seq_num += 1;
             }
@@ -185,7 +211,7 @@ mod tests {
         let mut output_buffer = Vec::new();
 
         let compressor = GzipCompressor;
-        let result = compress_stream(&mut input_cursor, &mut output_buffer, &compressor, 4);
+        let result = compress_stream(&mut input_cursor, &mut output_buffer, &compressor, 4, None);
         assert!(result.is_ok(), "Stream mode compression failed: {:?}", result.err());
 
         // Decompress and verify

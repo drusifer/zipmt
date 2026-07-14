@@ -3,6 +3,7 @@
 pub mod compressor;
 pub mod split_mode;
 pub mod stream_mode;
+pub mod tui;
 
 use std::fs::File;
 use std::io;
@@ -20,11 +21,12 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub static VERBOSE: AtomicBool = AtomicBool::new(false);
+pub static TUI_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 #[macro_export]
 macro_rules! log_verbose {
     ($($arg:tt)*) => {
-        if $crate::VERBOSE.load(std::sync::atomic::Ordering::Relaxed) {
+        if $crate::VERBOSE.load(std::sync::atomic::Ordering::Relaxed) && !$crate::TUI_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
             eprintln!("[INFO] {}", format!($($arg)*));
         }
     };
@@ -70,6 +72,10 @@ struct Args {
     /// Verbose output / metrics.
     #[arg(short, long)]
     verbose: bool,
+
+    /// Display terminal progress UI.
+    #[arg(short = 'T', long)]
+    tui: bool,
 }
 
 fn main() {
@@ -151,7 +157,25 @@ fn run_app(args: Args, compressor: &(dyn Compressor + Send + Sync)) -> Result<()
         return Ok(());
     }
 
-    if is_stdin {
+    // Initialize TuiState if flag is set
+    let tui_state = if args.tui {
+        TUI_ACTIVE.store(true, Ordering::Relaxed);
+        let state = if is_stdin {
+            Arc::new(Mutex::new(tui::TuiState::new_stream(
+                if threads_count > 0 { threads_count * 2 } else { std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4) * 2 }
+            )))
+        } else {
+            let chunks_count = if threads_count > 0 { threads_count } else { std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4) };
+            Arc::new(Mutex::new(tui::TuiState::new_split(chunks_count)))
+        };
+        Some(state)
+    } else {
+        None
+    };
+
+    let tui_handle = tui_state.as_ref().map(|state| tui::start_tui_thread(Arc::clone(state)));
+
+    let run_res = if is_stdin {
         log_verbose!("Running in Stream Mode (reading from standard input)...");
         let mut stdin = io::stdin();
 
@@ -159,7 +183,7 @@ fn run_app(args: Args, compressor: &(dyn Compressor + Send + Sync)) -> Result<()
         if args.stdout || args.output.is_none() {
             log_verbose!("Writing compressed stream to standard output");
             let mut stdout = io::stdout();
-            stream_mode::compress_stream(&mut stdin, &mut stdout, compressor, threads_count)?;
+            stream_mode::compress_stream(&mut stdin, &mut stdout, compressor, threads_count, tui_state.clone())
         } else {
             let out_path = PathBuf::from(args.output.as_ref().unwrap());
             log_verbose!("Writing compressed stream to output file: {:?}", out_path);
@@ -170,7 +194,7 @@ fn run_app(args: Args, compressor: &(dyn Compressor + Send + Sync)) -> Result<()
             }
 
             let mut out_file = File::create(&out_path)?;
-            stream_mode::compress_stream(&mut stdin, &mut out_file, compressor, threads_count)?;
+            stream_mode::compress_stream(&mut stdin, &mut out_file, compressor, threads_count, tui_state.clone())
         }
     } else {
         // Split mode / File compression
@@ -212,20 +236,29 @@ fn run_app(args: Args, compressor: &(dyn Compressor + Send + Sync)) -> Result<()
                 *guard = Some(path.clone());
             }
 
-            split_mode::compress_file(&input_path, path, compressor, threads_count)?;
+            let res = split_mode::compress_file(&input_path, path, compressor, threads_count, tui_state.clone());
 
-            if args.delete {
+            if res.is_ok() && args.delete {
                 log_verbose!("--delete option active. Removing source file: {:?}", input_path);
                 std::fs::remove_file(&input_path)?;
             }
+            res
         } else {
             // Writing to stdout in split mode (requires streaming the output chunks)
             let mut stdout = io::stdout();
             let input_data = std::fs::read(&input_path)?;
             let mut cursor = io::Cursor::new(input_data);
-            stream_mode::compress_stream(&mut cursor, &mut stdout, compressor, threads_count)?;
+            stream_mode::compress_stream(&mut cursor, &mut stdout, compressor, threads_count, tui_state.clone())
         }
+    };
+
+    // Clean up TUI thread
+    if let Some(ref state) = tui_state {
+        state.lock().unwrap().is_complete = true;
+    }
+    if let Some(handle) = tui_handle {
+        let _ = handle.join();
     }
 
-    Ok(())
+    run_res
 }

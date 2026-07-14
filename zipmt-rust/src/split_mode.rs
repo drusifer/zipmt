@@ -4,12 +4,15 @@ use std::path::Path;
 use rayon::prelude::*;
 use crate::compressor::{Compressor, ZipError};
 
+use std::sync::{Arc, Mutex};
+
 /// Compresses a file in Split Mode using Rayon for parallel chunk processing.
 pub fn compress_file(
     input_path: &Path,
     output_path: &Path,
     compressor: &dyn Compressor,
     num_threads: usize,
+    tui_state: Option<Arc<Mutex<crate::tui::TuiState>>>,
 ) -> Result<(), ZipError> {
     // Read entire input file
     crate::log_verbose!("Reading input file: {:?}", input_path);
@@ -38,6 +41,16 @@ pub fn compress_file(
     // Collect chunks as slices
     let chunks: Vec<&[u8]> = input_data.chunks(chunk_size).collect();
 
+    // Initialize TuiState total sizes if active
+    if let Some(ref tui) = tui_state {
+        let mut guard = tui.lock().unwrap();
+        for (i, chunk) in chunks.iter().enumerate() {
+            if i < guard.stripes.len() {
+                guard.stripes[i].total_bytes = chunk.len();
+            }
+        }
+    }
+
     crate::log_verbose!("Initializing Rayon thread pool with {} threads...", chunks_count);
     // Setup rayon thread pool override if num_threads is specified
     let pool = rayon::ThreadPoolBuilder::new()
@@ -47,10 +60,24 @@ pub fn compress_file(
 
     crate::log_verbose!("Compressing chunks concurrently...");
     // Compress chunks concurrently
+    let tui_state_ref = tui_state.clone();
     let compressed_chunks: Result<Vec<Vec<u8>>, ZipError> = pool.install(|| {
         chunks
             .into_par_iter()
-            .map(|chunk| compressor.compress(chunk))
+            .enumerate()
+            .map(|(i, chunk)| {
+                let res = compressor.compress(chunk);
+                if let Some(ref tui) = tui_state_ref {
+                    if let Ok(ref compressed) = res {
+                        let mut guard = tui.lock().unwrap();
+                        if i < guard.stripes.len() {
+                            guard.stripes[i].bytes_processed = chunk.len();
+                            guard.stripes[i].bytes_written = compressed.len();
+                        }
+                    }
+                }
+                res
+            })
             .collect()
     });
 
@@ -84,7 +111,7 @@ mod tests {
         std::fs::write(&input_path, &original_content).unwrap();
 
         let compressor = GzipCompressor;
-        let result = compress_file(&input_path, &output_path, &compressor, 4);
+        let result = compress_file(&input_path, &output_path, &compressor, 4, None);
         assert!(result.is_ok(), "Split mode compression failed");
 
         // Verify we can decompress the output and it matches

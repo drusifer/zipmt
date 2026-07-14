@@ -1,14 +1,13 @@
 # Next Steps
 
 ## Immediate Next Action
-- Publish the final sprint close report to CHAT.md and report to the user.
+- Publish the final TUI sprint close report.
 
 ## Waiting On
 None
 
 ## Planned Work
-- [ ] Publish sprint close report
-- [ ] Mark sprint as closed and transition to post-sprint feedback
+- [ ] Publish sprint close report and close sprint.
 
 ---
-*Last updated: 2026-07-13T16:42:07*
+*Last updated: 2026-07-13T20:01:05*

@@ -167,3 +167,34 @@ fn test_integration_delete_source() {
     assert!(output_path.exists(), "Output file was not created");
     assert!(!input_path.exists(), "Source input file was not deleted despite --delete flag");
 }
+
+#[test]
+fn test_integration_tui_mode() {
+    let dir = tempdir().unwrap();
+    let bin = get_bin_path();
+
+    let input_path = dir.path().join("input.txt");
+    let output_path = dir.path().join("output.gz");
+
+    let original_data = b"Some repetitive data to trigger TUI redraw loops. ".repeat(100);
+    std::fs::write(&input_path, &original_data).unwrap();
+
+    // Run with --tui / -T
+    let output = Command::new(&bin)
+        .arg(&input_path)
+        .arg("-o")
+        .arg(&output_path)
+        .arg("-a")
+        .arg("gz")
+        .arg("-T")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "TUI command failed");
+    let stderr_str = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr_str.contains("=== [zipmt-rust] Concurrency Progress"),
+        "TUI header not found in stderr: {}",
+        stderr_str
+    );
+}
