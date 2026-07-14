@@ -216,8 +216,7 @@ fn render_history_chart(history: &[f64], height: usize) -> Vec<String> {
 }
 
 pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
-    // Reset cursor to home position
-    let _ = write!(target, "\x1B[H");
+    let mut lines: Vec<String> = Vec::new();
 
     // Standardized/mockable elapsed time for layout consistency in tests
     #[cfg(test)]
@@ -241,7 +240,7 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
 
     match state.mode {
         TuiMode::Split => {
-            let _ = writeln!(target, "{}┌─── LCARS COMMAND PANEL ─ [ SYSTEM: ACTIVE ] ──────────────────────────┐{}", orange, reset);
+            lines.push(format!("{}┌─── LCARS COMMAND PANEL ─ [ SYSTEM: ACTIVE ] ──────────────────────────┐{}", orange, reset));
 
             let mut total_in = 0;
             let mut total_out = 0;
@@ -275,8 +274,7 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
                 1.0
             };
 
-            let _ = writeln!(
-                target,
+            lines.push(format!(
                 "{}│ {}Ingested : {}{:7.2} MB / {:7.2} MB    {}│ {}Speed: {}{:5.1} MB/s                     {}│{}",
                 orange,
                 cyan,
@@ -289,9 +287,8 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
                 speed / (1024.0 * 1024.0),
                 orange,
                 reset
-            );
-            let _ = writeln!(
-                target,
+            ));
+            lines.push(format!(
                 "{}│ {}Output   : {}{:7.2} MB ({:5.2}x Ratio)  {}│ {}Time : {}{:5.1}s (ETA: {:<12})     {}│{}",
                 orange,
                 cyan,
@@ -305,10 +302,9 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
                 eta_str,
                 orange,
                 reset
-            );
-            let _ = writeln!(target, "{}├───────────────────────────────────────┬───────────────────────────────┤{}", orange, reset);
-            let _ = writeln!(
-                target,
+            ));
+            lines.push(format!("{}├───────────────────────────────────────┬───────────────────────────────┤{}", orange, reset));
+            lines.push(format!(
                 "{}│ {}STRIPE SECTORS PROGRESS             {}│ {}INGEST SPEED HISTORY (30s)    {}│{}",
                 orange,
                 purple,
@@ -316,7 +312,7 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
                 purple,
                 orange,
                 reset
-            );
+            ));
 
             let chart_lines = render_history_chart(&state.speed_history, 6);
             for r in 0..6 {
@@ -328,7 +324,7 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
                         0.0
                     };
                     let bar_len = 15;
-                    let filled = ((pct / 100.0) * bar_len as f64) as usize;
+                    let filled = std::cmp::min(((pct / 100.0) * bar_len as f64) as usize, bar_len);
                     let bar: String = std::iter::repeat('█')
                         .take(filled)
                         .chain(std::iter::repeat('░').take(bar_len - filled))
@@ -355,8 +351,7 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
 
                 let right_str = &chart_lines[r];
 
-                let _ = writeln!(
-                    target,
+                lines.push(format!(
                     "{}│ {}{:<37} {}│ {}{} {}│{}",
                     orange,
                     left_str,
@@ -366,12 +361,11 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
                     right_str,
                     orange,
                     reset
-                );
+                ));
             }
 
-            let _ = writeln!(target, "{}├───────────────────────────────────────┼───────────────────────────────┤{}", orange, reset);
-            let _ = writeln!(
-                target,
+            lines.push(format!("{}├───────────────────────────────────────┼───────────────────────────────┤{}", orange, reset));
+            lines.push(format!(
                 "{}│ {}CONTROLS: [P] Pause  [-] Slow Down  {}│ {}STATUS: THROTTLE: {:3}ms    {}│{}",
                 orange,
                 purple,
@@ -380,20 +374,19 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
                 throttle_delay,
                 orange,
                 reset
-            );
-            let _ = writeln!(
-                target,
+            ));
+            lines.push(format!(
                 "{}│           [+] Speed Up  [Q] Abort     {}│         STATE   : {}     {}│{}",
                 orange,
                 orange,
                 pause_status,
                 orange,
                 reset
-            );
-            let _ = writeln!(target, "{}╰───────────────────────────────────────┴───────────────────────────────╯{}", orange, reset);
+            ));
+            lines.push(format!("{}╰───────────────────────────────────────┴───────────────────────────────╯{}", orange, reset));
         }
         TuiMode::Stream => {
-            let _ = writeln!(target, "{}┌─── LCARS COMMAND PANEL ─ [ SYSTEM: ACTIVE ] ──────────────────────────┐{}", orange, reset);
+            lines.push(format!("{}┌─── LCARS COMMAND PANEL ─ [ SYSTEM: ACTIVE ] ──────────────────────────┐{}", orange, reset));
 
             let speed_in = if elapsed > 0.0 {
                 state.bytes_read as f64 / elapsed
@@ -416,8 +409,7 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
             let proj_5m = speed_in * 300.0;
             let proj_10m = speed_in * 600.0;
 
-            let _ = writeln!(
-                target,
+            lines.push(format!(
                 "{}│ {}Ingested : {}{:7.2} MB                 {}│ {}Speed: {}{:5.1} MB/s                     {}│{}",
                 orange,
                 cyan,
@@ -429,9 +421,8 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
                 speed_in / (1024.0 * 1024.0),
                 orange,
                 reset
-            );
-            let _ = writeln!(
-                target,
+            ));
+            lines.push(format!(
                 "{}│ {}Output   : {}{:7.2} MB ({:5.2}x Ratio)  {}│ {}Speed: {}{:5.1} MB/s                     {}│{}",
                 orange,
                 cyan,
@@ -444,10 +435,9 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
                 speed_out / (1024.0 * 1024.0),
                 orange,
                 reset
-            );
-            let _ = writeln!(target, "{}├───────────────────────────────────────┬───────────────────────────────┤{}", orange, reset);
-            let _ = writeln!(
-                target,
+            ));
+            lines.push(format!("{}├───────────────────────────────────────┬───────────────────────────────┤{}", orange, reset));
+            lines.push(format!(
                 "{}│ {}TRANSPORTER BUFFER CAPACITY          {}│ {}INGEST SPEED HISTORY (30s)    {}│{}",
                 orange,
                 purple,
@@ -455,7 +445,7 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
                 purple,
                 orange,
                 reset
-            );
+            ));
 
             let chart_lines = render_history_chart(&state.speed_history, 6);
             for r in 0..6 {
@@ -464,7 +454,7 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
                     let depth = state.queue_depth;
                     let cap_f = if cap > 0 { cap } else { 1 };
                     let bar_len = 15;
-                    let filled = (depth * bar_len) / cap_f;
+                    let filled = std::cmp::min((depth * bar_len) / cap_f, bar_len);
                     let bar: String = std::iter::repeat('█')
                         .take(filled)
                         .chain(std::iter::repeat('░').take(bar_len - filled))
@@ -490,8 +480,7 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
 
                 let right_str = &chart_lines[r];
 
-                let _ = writeln!(
-                    target,
+                lines.push(format!(
                     "{}│ {}{:<37} {}│ {}{} {}│{}",
                     orange,
                     left_str,
@@ -501,12 +490,11 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
                     right_str,
                     orange,
                     reset
-                );
+                ));
             }
 
-            let _ = writeln!(target, "{}├───────────────────────────────────────┼───────────────────────────────┤{}", orange, reset);
-            let _ = writeln!(
-                target,
+            lines.push(format!("{}├───────────────────────────────────────┼───────────────────────────────┤{}", orange, reset));
+            lines.push(format!(
                 "{}│ {}CONTROLS: [P] Pause  [-] Slow Down  {}│ {}STATUS: THROTTLE: {:3}ms    {}│{}",
                 orange,
                 purple,
@@ -515,18 +503,38 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
                 throttle_delay,
                 orange,
                 reset
-            );
-            let _ = writeln!(
-                target,
+            ));
+            lines.push(format!(
                 "{}│           [+] Speed Up  [Q] Abort     {}│         STATE   : {}     {}│{}",
                 orange,
                 orange,
                 pause_status,
                 orange,
                 reset
-            );
-            let _ = writeln!(target, "{}╰───────────────────────────────────────┴───────────────────────────────╯{}", orange, reset);
+            ));
+            lines.push(format!("{}╰───────────────────────────────────────┴───────────────────────────────╯{}", orange, reset));
         }
+    }
+
+    // Centering calculation
+    #[cfg(test)]
+    let (cols, rows) = (80, 24);
+    #[cfg(not(test))]
+    let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
+
+    let pad_left = (cols as usize).saturating_sub(78) / 2;
+    let pad_top = (rows as usize).saturating_sub(16) / 2;
+
+    // Reset cursor to home position and clear screen
+    let _ = write!(target, "\x1B[H\x1B[2J");
+
+    for _ in 0..pad_top {
+        let _ = writeln!(target);
+    }
+
+    let padding = " ".repeat(pad_left);
+    for line in lines {
+        let _ = writeln!(target, "{}{}", padding, line);
     }
 }
 
