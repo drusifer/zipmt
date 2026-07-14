@@ -18,10 +18,12 @@ use compressor::{Compressor, GzipCompressor, Bzip2Compressor, XzCompressor, ZipE
 // Yes! A standard std::sync::OnceLock is available in Rust 1.70+ and completely standard!
 // OnceLock is perfect and doesn't require any external crate!
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering, AtomicU64};
 
 pub static VERBOSE: AtomicBool = AtomicBool::new(false);
 pub static TUI_ACTIVE: AtomicBool = AtomicBool::new(false);
+pub static THROTTLE_DELAY_MS: AtomicU64 = AtomicU64::new(0);
+pub static IS_PAUSED: AtomicBool = AtomicBool::new(false);
 
 #[macro_export]
 macro_rules! log_verbose {
@@ -32,10 +34,20 @@ macro_rules! log_verbose {
     };
 }
 
-static OUTPUT_FILE_PATH: OnceLock<Arc<Mutex<Option<PathBuf>>>> = OnceLock::new();
+pub static OUTPUT_FILE_PATH: OnceLock<Arc<Mutex<Option<PathBuf>>>> = OnceLock::new();
 
 fn get_output_path_mutex() -> &'static Arc<Mutex<Option<PathBuf>>> {
     OUTPUT_FILE_PATH.get_or_init(|| Arc::new(Mutex::new(None)))
+}
+
+pub fn cleanup_output_file() {
+    if let Some(mutex) = OUTPUT_FILE_PATH.get() {
+        if let Ok(guard) = mutex.lock() {
+            if let Some(ref path) = *guard {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
 }
 
 #[derive(Parser, Debug)]

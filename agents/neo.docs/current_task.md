@@ -2,20 +2,20 @@
 
 **Status:** In Progress
 **Assigned to:** Neo
-**Started:** 2026-07-14T11:10:38
+**Started:** 2026-07-14T11:21:40
 
 ## Task Description
-Implement Phase 1, Phase 2, and Phase 3 of TUI UX Upgrade:
-- Phase 1: Store input file size in `TuiState` and calculate ETA countdown.
-- Phase 2: Implement time-capacity projection forecasting.
-- Phase 3: Style layouts using colorful retro Star Trek LCARS theme.
+Implement Phase 1, Phase 2, and Phase 3 of TUI LCARS Upgrade:
+- Phase 1: Add `crossterm` dependency, implement global `THROTTLE_DELAY_MS` and `IS_PAUSED` logic.
+- Phase 2: Set up Crossterm raw alternate screen handlings and keyboard event polling loops.
+- Phase 3: Implement LCARS borders, solid block bars (`█` / `░`), and rolling MB/s speed history chart.
 
 ## Progress
-- [ ] Add `total_input_size` field to `TuiState` and initialize it
-- [ ] Implement ETA calculation for split mode
-- [ ] Implement 1m, 5m, 10m projections for stream mode
-- [ ] Implement Star Trek LCARS colors and headers in TUI rendering
-- [ ] Update snapshots and run verification tests
+- [ ] Add `crossterm` to `Cargo.toml` dependencies
+- [ ] Implement atomic variables and throttling in `main.rs` & `compressor.rs`
+- [ ] Implement alternate screen and keyboard event listeners in `tui.rs`
+- [ ] Implement grid drawing, pretty progress bars, and history graphs in `tui.rs`
+- [ ] Record snapshots and run verification tests
 - [ ] Update state files (context, next_steps)
 - [ ] Hand off to Trin for UAT
 
@@ -26,4 +26,4 @@ None
 None yet
 
 ---
-*Last updated: 2026-07-14T11:10:38*
+*Last updated: 2026-07-14T11:21:40*

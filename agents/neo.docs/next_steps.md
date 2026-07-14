@@ -1,17 +1,17 @@
 # Next Steps
 
 ## Immediate Next Action
-- Implement TUI UX Upgrade features.
+- Add dependencies to `Cargo.toml` and implement throttling static variables.
 
 ## Waiting On
 None
 
 ## Planned Work
-- [ ] Add `total_input_size` to `TuiState`
-- [ ] Implement ETA logic
-- [ ] Implement projections
-- [ ] Implement LCARS theme
+- [ ] Add `crossterm` dependency to `Cargo.toml`
+- [ ] Implement atomic variables and loop sleeps
+- [ ] Implement TUI alternate screens and input listeners
+- [ ] Update snapshots and tests
 - [ ] Save state files and hand off to Trin (@trin)
 
 ---
-*Last updated: 2026-07-14T11:10:38*
+*Last updated: 2026-07-14T11:21:40*

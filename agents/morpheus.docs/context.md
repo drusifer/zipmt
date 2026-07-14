@@ -3,9 +3,8 @@
 This file tracks the current state of technical vision, architecture, and decisions made by the Tech Lead (Morpheus).
 
 ## Recent Decisions
-- **Designed TUI Testing Architecture**: Created `docs/ARCH_TUI_TEST.md`.
-- **Designed TUI UX Upgrade Architecture**: Created `docs/ARCH_TUI_UX.md`.
-- **Approved TUI UX Upgrade Implementation**: Audited tui.rs refactoring, ETA timer logic, capacity forecasts, and Star Trek retro aesthetics. All layouts pass strict compilation, snapshot tests, and integration verifications.
+- **Designed LCARS Full-Screen Architecture**: Created `docs/ARCH_LCARS.md`.
+- **Approved TUI LCARS Upgrade Implementation**: Audited alternate screen handler, raw modes, keyboard polling loops, and rolling historical speed sparklines. All grids compile cleanly and unit tests pass.
 
 ---
-*Last updated: 2026-07-14T11:12:05*
+*Last updated: 2026-07-14T11:23:28*

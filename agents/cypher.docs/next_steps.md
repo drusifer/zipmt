@@ -7,7 +7,7 @@
 - Mouse (@mouse) to verify tasks and planning.
 
 ## Planned Work
-- [ ] Review UAT results for TUI UX upgrade from Trin.
+- [ ] Review UAT results for LCARS TUI from Trin.
 
 ---
-*Last updated: 2026-07-14T11:10:00*
+*Last updated: 2026-07-14T11:20:55*

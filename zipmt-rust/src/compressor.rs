@@ -45,6 +45,16 @@ pub trait Compressor: Send + Sync {
     fn verify(&self, input: &[u8]) -> Result<(), ZipError>;
 }
 
+fn check_throttle() {
+    while crate::IS_PAUSED.load(std::sync::atomic::Ordering::Relaxed) {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let delay = crate::THROTTLE_DELAY_MS.load(std::sync::atomic::Ordering::Relaxed);
+    if delay > 0 {
+        std::thread::sleep(std::time::Duration::from_millis(delay));
+    }
+}
+
 /// Gzip compressor adapter.
 pub struct GzipCompressor;
 
@@ -53,6 +63,7 @@ impl Compressor for GzipCompressor {
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
         let chunk_size = 64 * 1024;
         for chunk in input.chunks(chunk_size) {
+            check_throttle();
             encoder.write_all(chunk)?;
             on_progress(chunk.len());
         }
@@ -78,6 +89,7 @@ impl Compressor for Bzip2Compressor {
         let mut encoder = BzEncoder::new(Vec::new(), bzip2::Compression::default());
         let chunk_size = 64 * 1024;
         for chunk in input.chunks(chunk_size) {
+            check_throttle();
             encoder.write_all(chunk)?;
             on_progress(chunk.len());
         }
@@ -103,6 +115,7 @@ impl Compressor for XzCompressor {
         let mut encoder = XzEncoder::new(Vec::new(), 6);
         let chunk_size = 64 * 1024;
         for chunk in input.chunks(chunk_size) {
+            check_throttle();
             encoder.write_all(chunk)?;
             on_progress(chunk.len());
         }
