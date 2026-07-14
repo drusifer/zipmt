@@ -2,11 +2,17 @@
 source: src/tui.rs
 expression: clean_output
 ---
-=== [zipmt-rust] Pipeline Stream Progress (Stream Mode) ===
-Queue Capacity: [=======             ] 3/8 blocks in transit
---------------------------------------------------
-Throughput:
-  - Read :   50.00MB (40.52MB/s)
-  - Write:   20.00MB (16.21MB/s)
-Compression Ratio: 2.50x
-Elapsed Time: 1.2s
+╭────────────────────────────────────────────────────────────────────────╮
+│ [LCARS-982] PIPELINE STREAM DIAGNOSTICS                                │
+├────────────────────────────────────────────────────────────────────────┤
+│ Transporter Buffer: [=======             ] 3/8 blocks                             │
+├────────────────────────────────────────────────────────────────────────┤
+│ Ingested :   50.00 MB             | Speed:  40.5 MB/s                     │
+│ Output   :   20.00 MB             | Speed:  16.2 MB/s                     │
+│ Ratio    :  2.50x                  | Time :   1.2s                         │
+├────────────────────────────────────────────────────────────────────────┤
+│ [CAPACITY FORECAST]                                                    │
+│   - 1-Minute Target :  2431.12 MB                                     │
+│   - 5-Minute Target : 12155.59 MB                                     │
+│   - 10-Minute Target: 24311.18 MB                                     │
+╰────────────────────────────────────────────────────────────────────────╯

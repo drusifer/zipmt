@@ -19,6 +19,7 @@ pub struct TuiState {
     pub mode: TuiMode,
     pub start_time: Instant,
     pub is_complete: bool,
+    pub total_input_size: usize,
     // Split mode progress
     pub stripes: Vec<StripeProgress>,
     // Stream mode progress
@@ -29,7 +30,7 @@ pub struct TuiState {
 }
 
 impl TuiState {
-    pub fn new_split(total_stripes: usize) -> Self {
+    pub fn new_split(total_stripes: usize, total_input_size: usize) -> Self {
         let mut stripes = Vec::new();
         for id in 0..total_stripes {
             stripes.push(StripeProgress {
@@ -43,6 +44,7 @@ impl TuiState {
             mode: TuiMode::Split,
             start_time: Instant::now(),
             is_complete: false,
+            total_input_size,
             stripes,
             bytes_read: 0,
             bytes_written: 0,
@@ -51,11 +53,12 @@ impl TuiState {
         }
     }
 
-    pub fn new_stream(queue_capacity: usize) -> Self {
+    pub fn new_stream(queue_capacity: usize, total_input_size: usize) -> Self {
         TuiState {
             mode: TuiMode::Stream,
             start_time: Instant::now(),
             is_complete: false,
+            total_input_size,
             stripes: Vec::new(),
             bytes_read: 0,
             bytes_written: 0,
@@ -100,11 +103,93 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
     #[cfg(not(test))]
     let elapsed = state.start_time.elapsed().as_secs_f64();
 
+    // Style Colors: LCARS Palette
+    let orange = "\x1B[38;5;208m";
+    let purple = "\x1B[38;5;147m";
+    let cyan = "\x1B[38;5;117m";
+    let yellow = "\x1B[38;5;220m";
+    let reset = "\x1B[0m";
+
     match state.mode {
         TuiMode::Split => {
-            let _ = writeln!(target, "=== [zipmt-rust] Concurrency Progress (Split Mode) ===");
+            let _ = writeln!(target, "{}╭────────────────────────────────────────────────────────────────────────╮{}", orange, reset);
+            let _ = writeln!(target, "{}│ {}[LCARS-982] SYSTEM DIAGNOSTICS                                         {}│{}", orange, purple, orange, reset);
+            let _ = writeln!(target, "{}├────────────────────────────────────────────────────────────────────────┤{}", orange, reset);
+
             let mut total_in = 0;
             let mut total_out = 0;
+
+            for stripe in &state.stripes {
+                total_in += stripe.bytes_processed;
+                total_out += stripe.bytes_written;
+            }
+
+            let speed = if elapsed > 0.0 {
+                total_in as f64 / elapsed
+            } else {
+                0.0
+            };
+
+            let eta_str = if total_in == 0 {
+                "Estimating...".to_string()
+            } else if total_in >= state.total_input_size {
+                "0s (Complete)".to_string()
+            } else if speed > 0.0 {
+                let remaining = state.total_input_size.saturating_sub(total_in);
+                let eta_secs = (remaining as f64 / speed).round() as usize;
+                format!("{}s", eta_secs)
+            } else {
+                "--".to_string()
+            };
+
+            let ratio = if total_out > 0 {
+                total_in as f64 / total_out as f64
+            } else {
+                1.0
+            };
+
+            let _ = writeln!(
+                target,
+                "{}│ {}Ingested : {}{:7.2} MB / {:7.2} MB {}| Speed: {}{:5.1} MB/s                     {}│{}",
+                orange,
+                cyan,
+                yellow,
+                total_in as f64 / (1024.0 * 1024.0),
+                state.total_input_size as f64 / (1024.0 * 1024.0),
+                cyan,
+                yellow,
+                speed / (1024.0 * 1024.0),
+                orange,
+                reset
+            );
+            let _ = writeln!(
+                target,
+                "{}│ {}Output   : {}{:7.2} MB             {}| Ratio: {}{:5.2}x                      {}│{}",
+                orange,
+                cyan,
+                yellow,
+                total_out as f64 / (1024.0 * 1024.0),
+                cyan,
+                yellow,
+                ratio,
+                orange,
+                reset
+            );
+            let _ = writeln!(
+                target,
+                "{}│ {}Time     : {}{:5.1}s                 {}| ETA  : {}{:<12}                  {}│{}",
+                orange,
+                cyan,
+                yellow,
+                elapsed,
+                cyan,
+                yellow,
+                eta_str,
+                orange,
+                reset
+            );
+            let _ = writeln!(target, "{}├────────────────────────────────────────────────────────────────────────┤{}", orange, reset);
+            let _ = writeln!(target, "{}│ {}[STRIPE SECTORS] PROGRESS                                              {}│{}", orange, purple, orange, reset);
 
             for stripe in &state.stripes {
                 let pct = if stripe.total_bytes > 0 {
@@ -120,7 +205,7 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
                     .chain(std::iter::repeat(' ').take(bar_len - filled))
                     .collect();
 
-                let ratio = if stripe.bytes_written > 0 {
+                let stripe_ratio = if stripe.bytes_written > 0 {
                     stripe.bytes_processed as f64 / stripe.bytes_written as f64
                 } else {
                     1.0
@@ -128,43 +213,32 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
 
                 let _ = writeln!(
                     target,
-                    "Stripe {:2}: [{}] {:3.0}% | In: {:7.2}KB, Out: {:7.2}KB ({:.2}x)",
+                    "{}│ {}Sector {:02}: {}[{}] {}{:3.0}% {}| In: {}{:7.1}KB {}| Out: {}{:7.1}KB {}({:.2}x) {}│{}",
+                    orange,
+                    cyan,
                     stripe.id,
+                    purple,
                     bar,
+                    yellow,
                     pct,
+                    cyan,
+                    yellow,
                     stripe.bytes_processed as f64 / 1024.0,
+                    cyan,
+                    yellow,
                     stripe.bytes_written as f64 / 1024.0,
-                    ratio
+                    purple,
+                    stripe_ratio,
+                    orange,
+                    reset
                 );
-
-                total_in += stripe.bytes_processed;
-                total_out += stripe.bytes_written;
             }
-
-            let speed = if elapsed > 0.0 {
-                (total_in as f64 / (1024.0 * 1024.0)) / elapsed
-            } else {
-                0.0
-            };
-
-            let total_ratio = if total_out > 0 {
-                total_in as f64 / total_out as f64
-            } else {
-                1.0
-            };
-
-            let _ = writeln!(target, "--------------------------------------------------");
-            let _ = writeln!(
-                target,
-                "Total In: {:.2}MB | Out: {:.2}MB | Speed: {:.1}MB/s | Ratio: {:.2}x",
-                total_in as f64 / (1024.0 * 1024.0),
-                total_out as f64 / (1024.0 * 1024.0),
-                speed,
-                total_ratio
-            );
+            let _ = writeln!(target, "{}╰────────────────────────────────────────────────────────────────────────╯{}", orange, reset);
         }
         TuiMode::Stream => {
-            let _ = writeln!(target, "=== [zipmt-rust] Pipeline Stream Progress (Stream Mode) ===");
+            let _ = writeln!(target, "{}╭────────────────────────────────────────────────────────────────────────╮{}", orange, reset);
+            let _ = writeln!(target, "{}│ {}[LCARS-982] PIPELINE STREAM DIAGNOSTICS                                {}│{}", orange, purple, orange, reset);
+            let _ = writeln!(target, "{}├────────────────────────────────────────────────────────────────────────┤{}", orange, reset);
 
             let cap = state.queue_capacity;
             let depth = state.queue_depth;
@@ -176,15 +250,28 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
                 .chain(std::iter::repeat(' ').take(bar_len - filled))
                 .collect();
 
-            let _ = writeln!(target, "Queue Capacity: [{}] {}/{} blocks in transit", bar, depth, cap);
+            let _ = writeln!(
+                target,
+                "{}│ {}Transporter Buffer: {}[{}] {}{}/{} blocks                             {}│{}",
+                orange,
+                cyan,
+                purple,
+                bar,
+                yellow,
+                depth,
+                cap,
+                orange,
+                reset
+            );
+            let _ = writeln!(target, "{}├────────────────────────────────────────────────────────────────────────┤{}", orange, reset);
 
             let speed_in = if elapsed > 0.0 {
-                (state.bytes_read as f64 / (1024.0 * 1024.0)) / elapsed
+                state.bytes_read as f64 / elapsed
             } else {
                 0.0
             };
             let speed_out = if elapsed > 0.0 {
-                (state.bytes_written as f64 / (1024.0 * 1024.0)) / elapsed
+                state.bytes_written as f64 / elapsed
             } else {
                 0.0
             };
@@ -195,12 +282,110 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
                 1.0
             };
 
-            let _ = writeln!(target, "--------------------------------------------------");
-            let _ = writeln!(target, "Throughput:");
-            let _ = writeln!(target, "  - Read : {:7.2}MB ({:5.2}MB/s)", state.bytes_read as f64 / (1024.0 * 1024.0), speed_in);
-            let _ = writeln!(target, "  - Write: {:7.2}MB ({:5.2}MB/s)", state.bytes_written as f64 / (1024.0 * 1024.0), speed_out);
-            let _ = writeln!(target, "Compression Ratio: {:.2}x", ratio);
-            let _ = writeln!(target, "Elapsed Time: {:.1}s", elapsed);
+            let proj_1m = speed_in * 60.0;
+            let proj_5m = speed_in * 300.0;
+            let proj_10m = speed_in * 600.0;
+
+            let _ = writeln!(
+                target,
+                "{}│ {}Ingested : {}{:7.2} MB             {}| Speed: {}{:5.1} MB/s                     {}│{}",
+                orange,
+                cyan,
+                yellow,
+                state.bytes_read as f64 / (1024.0 * 1024.0),
+                cyan,
+                yellow,
+                speed_in / (1024.0 * 1024.0),
+                orange,
+                reset
+            );
+            let _ = writeln!(
+                target,
+                "{}│ {}Output   : {}{:7.2} MB             {}| Speed: {}{:5.1} MB/s                     {}│{}",
+                orange,
+                cyan,
+                yellow,
+                state.bytes_written as f64 / (1024.0 * 1024.0),
+                cyan,
+                yellow,
+                speed_out / (1024.0 * 1024.0),
+                orange,
+                reset
+            );
+            let _ = writeln!(
+                target,
+                "{}│ {}Ratio    : {}{:5.2}x                  {}| Time : {}{:5.1}s                         {}│{}",
+                orange,
+                cyan,
+                yellow,
+                ratio,
+                cyan,
+                yellow,
+                elapsed,
+                orange,
+                reset
+            );
+
+            if state.total_input_size > 0 {
+                let eta_str = if state.bytes_read == 0 {
+                    "Estimating...".to_string()
+                } else if state.bytes_read >= state.total_input_size {
+                    "0s (Complete)".to_string()
+                } else if speed_in > 0.0 {
+                    let remaining = state.total_input_size.saturating_sub(state.bytes_read);
+                    let eta_secs = (remaining as f64 / speed_in).round() as usize;
+                    format!("{}s", eta_secs)
+                } else {
+                    "--".to_string()
+                };
+                let _ = writeln!(
+                    target,
+                    "{}│ {}Total    : {}{:7.2} MB             {}| ETA  : {}{:<12}                  {}│{}",
+                    orange,
+                    cyan,
+                    yellow,
+                    state.total_input_size as f64 / (1024.0 * 1024.0),
+                    cyan,
+                    yellow,
+                    eta_str,
+                    orange,
+                    reset
+                );
+            }
+
+            let _ = writeln!(target, "{}├────────────────────────────────────────────────────────────────────────┤{}", orange, reset);
+            let _ = writeln!(target, "{}│ {}[CAPACITY FORECAST]                                                    {}│{}", orange, purple, orange, reset);
+            let _ = writeln!(
+                target,
+                "{}│ {}  - 1-Minute Target : {}{:8.2} MB                                     {}│{}",
+                orange,
+                cyan,
+                yellow,
+                proj_1m / (1024.0 * 1024.0),
+                orange,
+                reset
+            );
+            let _ = writeln!(
+                target,
+                "{}│ {}  - 5-Minute Target : {}{:8.2} MB                                     {}│{}",
+                orange,
+                cyan,
+                yellow,
+                proj_5m / (1024.0 * 1024.0),
+                orange,
+                reset
+            );
+            let _ = writeln!(
+                target,
+                "{}│ {}  - 10-Minute Target: {}{:8.2} MB                                     {}│{}",
+                orange,
+                cyan,
+                yellow,
+                proj_10m / (1024.0 * 1024.0),
+                orange,
+                reset
+            );
+            let _ = writeln!(target, "{}╰────────────────────────────────────────────────────────────────────────╯{}", orange, reset);
         }
     }
 }
@@ -216,8 +401,9 @@ mod tests {
 
     #[test]
     fn test_tui_layout_split_mode_snapshot() {
-        let mut state = TuiState::new_split(4);
-        // Pre-populate some progress values
+        // Pre-populate split mode with 400KB total input size
+        let mut state = TuiState::new_split(4, 400 * 1024);
+        
         state.stripes[0].total_bytes = 102400;
         state.stripes[0].bytes_processed = 102400; // 100%
         state.stripes[0].bytes_written = 40960;
@@ -244,7 +430,7 @@ mod tests {
 
     #[test]
     fn test_tui_layout_stream_mode_snapshot() {
-        let mut state = TuiState::new_stream(8);
+        let mut state = TuiState::new_stream(8, 0);
         state.bytes_read = 50 * 1024 * 1024; // 50MB
         state.bytes_written = 20 * 1024 * 1024; // 20MB
         state.queue_depth = 3;

@@ -1,7 +1,7 @@
 # Next Steps
 
 ## Immediate Next Action
-- Wait for Morpheus's final code review and close of testing sprint.
+- Wait for Morpheus's final code review and close of TUI UX sprint.
 
 ## Waiting On
 - Morpheus (@morpheus) to review code.
@@ -10,4 +10,4 @@
 - [ ] Await code review sign-off.
 
 ---
-*Last updated: 2026-07-13T20:09:10*
+*Last updated: 2026-07-14T11:12:00*

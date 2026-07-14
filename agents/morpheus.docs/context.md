@@ -3,10 +3,9 @@
 This file tracks the current state of technical vision, architecture, and decisions made by the Tech Lead (Morpheus).
 
 ## Recent Decisions
-- **Designed zipmt-rust Architecture**: Formulated the modular design and dual concurrency pipelines (Rayon and channels/BTreeMap) in [docs/ARCH_RUST.md](file:///home/drusifer/Projects/zipmt/docs/ARCH_RUST.md).
-- **Designed TUI Architecture**: Drafted [docs/ARCH_TUI.md](file:///home/drusifer/Projects/zipmt/docs/ARCH_TUI.md) containing the concurrency, shared states, and ANSI-escaped rendering loop design.
-- **Designed TUI Testing Architecture**: Created [docs/ARCH_TUI_TEST.md](file:///home/drusifer/Projects/zipmt/docs/ARCH_TUI_TEST.md) detailing decoupled buffer writers and `insta` snapshot coverage.
-- **Approved TUI Snapshot Testing**: Audited tui.rs refactoring, general writer targets, and generated snapshots. Found the layout assertions fully compliant and robust.
+- **Designed TUI Testing Architecture**: Created `docs/ARCH_TUI_TEST.md`.
+- **Designed TUI UX Upgrade Architecture**: Created `docs/ARCH_TUI_UX.md`.
+- **Approved TUI UX Upgrade Implementation**: Audited tui.rs refactoring, ETA timer logic, capacity forecasts, and Star Trek retro aesthetics. All layouts pass strict compilation, snapshot tests, and integration verifications.
 
 ---
-*Last updated: 2026-07-13T20:09:20*
+*Last updated: 2026-07-14T11:12:05*

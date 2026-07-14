@@ -1,7 +1,7 @@
 # Next Steps
 
 ## Immediate Next Action
-- Publish the final TUI testing sprint close report.
+- Publish the final TUI UX Upgrade sprint close report.
 
 ## Waiting On
 None
@@ -10,4 +10,4 @@ None
 - [ ] Publish sprint close report and close sprint.
 
 ---
-*Last updated: 2026-07-13T20:09:57*
+*Last updated: 2026-07-14T11:12:43*

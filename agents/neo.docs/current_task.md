@@ -2,19 +2,20 @@
 
 **Status:** In Progress
 **Assigned to:** Neo
-**Started:** 2026-07-13T20:07:58
+**Started:** 2026-07-14T11:10:38
 
 ## Task Description
-Implement Phase 1 and Phase 2 of TUI testing:
-- Task 1.1: Refactor `draw_tui` to accept output target.
-- Task 1.2: Add `insta` and `regex` to `Cargo.toml` dev-dependencies.
-- Task 2.1: Write snapshot unit tests.
+Implement Phase 1, Phase 2, and Phase 3 of TUI UX Upgrade:
+- Phase 1: Store input file size in `TuiState` and calculate ETA countdown.
+- Phase 2: Implement time-capacity projection forecasting.
+- Phase 3: Style layouts using colorful retro Star Trek LCARS theme.
 
 ## Progress
-- [ ] Refactor `draw_tui` signature and replace prints
-- [ ] Update `Cargo.toml` dev-dependencies
-- [ ] Implement snapshot unit tests
-- [ ] Run `cargo test` to record snapshots
+- [ ] Add `total_input_size` field to `TuiState` and initialize it
+- [ ] Implement ETA calculation for split mode
+- [ ] Implement 1m, 5m, 10m projections for stream mode
+- [ ] Implement Star Trek LCARS colors and headers in TUI rendering
+- [ ] Update snapshots and run verification tests
 - [ ] Update state files (context, next_steps)
 - [ ] Hand off to Trin for UAT
 
@@ -25,4 +26,4 @@ None
 None yet
 
 ---
-*Last updated: 2026-07-13T20:07:58*
+*Last updated: 2026-07-14T11:10:38*

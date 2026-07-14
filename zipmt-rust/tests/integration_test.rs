@@ -193,7 +193,7 @@ fn test_integration_tui_mode() {
     assert!(output.status.success(), "TUI command failed");
     let stderr_str = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr_str.contains("=== [zipmt-rust] Concurrency Progress"),
+        stderr_str.contains("[LCARS-982] SYSTEM DIAGNOSTICS"),
         "TUI header not found in stderr: {}",
         stderr_str
     );

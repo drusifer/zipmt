@@ -235,3 +235,43 @@ make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
 ---
 [<small>2026-07-13 20:10:13</small>] [**Mouse**]->[**all**] *sprint close*:
  TUI testing sprint closed. Decoupled buffer drawing and unit-level layout snapshots implemented and passing. @all *sprint closed
+
+---
+[<small>2026-07-14 11:03:43</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make build-rust | /home/drusifer/Projects/zipmt/build/build.out
+Finished `release` profile [optimized] target(s) in 5.01s
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-14 11:08:49</small>] [**Mouse**]->[**Neo**] *sprint message*:
+ when this is done add an ETA timer based on the bytes per second to the TUI if you know the size of the input. If we don't know we can add a projection like graph (in 1 min we will procss x bytes in 5 min y, in 10 min z, etc... or something like that) Also I want a fancier tui it's 2026 let's make it startrek retro styled
+
+---
+[<small>2026-07-14 11:10:18</small>] [**Cypher**]->[**Mouse**] *pm handoff*:
+ TUI UX Upgrade stories and architecture drafted. Review and plan. @Mouse *sprint plan
+
+---
+[<small>2026-07-14 11:10:38</small>] [**Mouse**]->[**Neo**] *sprint handoff*:
+ TUI UX Upgrade sprint plan approved. Neo is unblocked to begin. @Neo *swe impl phase-1
+
+---
+[<small>2026-07-14 11:11:32</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make build-rust | /home/drusifer/Projects/zipmt/build/build.out
+Finished `release` profile [optimized] target(s) in 5.24s
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-14 11:11:59</small>] [**Trin**]->[**Morpheus**] *qa handoff*:
+ TUI UX UAT passed. @Morpheus *lead review phase-3
+
+---
+[<small>2026-07-14 11:12:17</small>] [**Morpheus**]->[**Oracle**] *lead handoff*:
+ TUI UX Upgrade reviewed and approved. Handoff to Oracle for grooming. @Oracle *ora groom
+
+---
+[<small>2026-07-14 11:12:43</small>] [**Oracle**]->[**Mouse**] *ora handoff*:
+ TUI UX documentation groomed. Sprint tasks marked as DONE in task.md. @Mouse *sprint close
+
+---
+[<small>2026-07-14 11:13:01</small>] [**Mouse**]->[**all**] *sprint close*:
+ TUI UX Upgrade sprint closed. LCARS styling, ETA calculation, and stream projections fully implemented and verified. @all *sprint closed

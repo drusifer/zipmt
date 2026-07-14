@@ -162,11 +162,14 @@ fn run_app(args: Args, compressor: &(dyn Compressor + Send + Sync)) -> Result<()
         TUI_ACTIVE.store(true, Ordering::Relaxed);
         let state = if is_stdin {
             Arc::new(Mutex::new(tui::TuiState::new_stream(
-                if threads_count > 0 { threads_count * 2 } else { std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4) * 2 }
+                if threads_count > 0 { threads_count * 2 } else { std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4) * 2 },
+                0
             )))
         } else {
+            let input_path = Path::new(args.input_file.as_ref().unwrap());
+            let file_size = std::fs::metadata(input_path).map(|m| m.len() as usize).unwrap_or(0);
             let chunks_count = if threads_count > 0 { threads_count } else { std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4) };
-            Arc::new(Mutex::new(tui::TuiState::new_split(chunks_count)))
+            Arc::new(Mutex::new(tui::TuiState::new_split(chunks_count, file_size)))
         };
         Some(state)
     } else {
