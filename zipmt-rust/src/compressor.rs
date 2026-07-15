@@ -35,11 +35,11 @@ impl From<std::io::Error> for ZipError {
 pub trait Compressor: Send + Sync {
     /// Compresses input bytes.
     fn compress(&self, input: &[u8]) -> Result<Vec<u8>, ZipError> {
-        self.compress_with_progress(input, &|_| {})
+        self.compress_with_progress(input, &|_, _| {})
     }
 
     /// Compresses input bytes with a progress callback.
-    fn compress_with_progress(&self, input: &[u8], on_progress: &(dyn Fn(usize) + Send + Sync)) -> Result<Vec<u8>, ZipError>;
+    fn compress_with_progress(&self, input: &[u8], on_progress: &(dyn Fn(usize, std::time::Duration) + Send + Sync)) -> Result<Vec<u8>, ZipError>;
 
     /// Decompresses input bytes to verify integrity, returning an error on corruption.
     fn verify(&self, input: &[u8]) -> Result<(), ZipError>;
@@ -58,13 +58,16 @@ pub struct GzipCompressor {
 }
 
 impl Compressor for GzipCompressor {
-    fn compress_with_progress(&self, input: &[u8], on_progress: &(dyn Fn(usize) + Send + Sync)) -> Result<Vec<u8>, ZipError> {
-        let mut encoder = GzEncoder::new(Vec::new(), Compression::new(self.level));
+    fn compress_with_progress(&self, input: &[u8], on_progress: &(dyn Fn(usize, std::time::Duration) + Send + Sync)) -> Result<Vec<u8>, ZipError> {
+        let level = crate::COMPRESSION_LEVEL.load(std::sync::atomic::Ordering::Relaxed);
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::new(level));
         let chunk_size = 64 * 1024;
         for chunk in input.chunks(chunk_size) {
             check_throttle();
+            let start = std::time::Instant::now();
             encoder.write_all(chunk)?;
-            on_progress(chunk.len());
+            let duration = start.elapsed();
+            on_progress(chunk.len(), duration);
         }
         let result = encoder.finish()?;
         Ok(result)
@@ -86,13 +89,16 @@ pub struct Bzip2Compressor {
 }
 
 impl Compressor for Bzip2Compressor {
-    fn compress_with_progress(&self, input: &[u8], on_progress: &(dyn Fn(usize) + Send + Sync)) -> Result<Vec<u8>, ZipError> {
-        let mut encoder = BzEncoder::new(Vec::new(), bzip2::Compression::new(self.level));
+    fn compress_with_progress(&self, input: &[u8], on_progress: &(dyn Fn(usize, std::time::Duration) + Send + Sync)) -> Result<Vec<u8>, ZipError> {
+        let level = crate::COMPRESSION_LEVEL.load(std::sync::atomic::Ordering::Relaxed);
+        let mut encoder = BzEncoder::new(Vec::new(), bzip2::Compression::new(level));
         let chunk_size = 64 * 1024;
         for chunk in input.chunks(chunk_size) {
             check_throttle();
+            let start = std::time::Instant::now();
             encoder.write_all(chunk)?;
-            on_progress(chunk.len());
+            let duration = start.elapsed();
+            on_progress(chunk.len(), duration);
         }
         let result = encoder.finish()?;
         Ok(result)
@@ -114,13 +120,16 @@ pub struct XzCompressor {
 }
 
 impl Compressor for XzCompressor {
-    fn compress_with_progress(&self, input: &[u8], on_progress: &(dyn Fn(usize) + Send + Sync)) -> Result<Vec<u8>, ZipError> {
-        let mut encoder = XzEncoder::new(Vec::new(), self.level);
+    fn compress_with_progress(&self, input: &[u8], on_progress: &(dyn Fn(usize, std::time::Duration) + Send + Sync)) -> Result<Vec<u8>, ZipError> {
+        let level = crate::COMPRESSION_LEVEL.load(std::sync::atomic::Ordering::Relaxed);
+        let mut encoder = XzEncoder::new(Vec::new(), level);
         let chunk_size = 64 * 1024;
         for chunk in input.chunks(chunk_size) {
             check_throttle();
+            let start = std::time::Instant::now();
             encoder.write_all(chunk)?;
-            on_progress(chunk.len());
+            let duration = start.elapsed();
+            on_progress(chunk.len(), duration);
         }
         let result = encoder.finish()?;
         Ok(result)

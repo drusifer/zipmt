@@ -67,12 +67,13 @@ pub fn compress_file(
             .enumerate()
             .map(|(i, chunk)| {
                 let tui_ref = tui_state_ref.clone();
-                let res = compressor.compress_with_progress(chunk, &|bytes| {
+                let res = compressor.compress_with_progress(chunk, &|bytes, duration| {
                     if let Some(ref tui) = tui_ref {
                         let mut guard = tui.lock().unwrap();
                         if i < guard.stripes.len() {
                             guard.stripes[i].bytes_processed += bytes;
                         }
+                        guard.update_chunk_time(duration);
                     }
                 });
                 if let Some(ref tui) = tui_state_ref {

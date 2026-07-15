@@ -25,6 +25,7 @@ pub static TUI_ACTIVE: AtomicBool = AtomicBool::new(false);
 pub static THROTTLE_DELAY_MS: AtomicU64 = AtomicU64::new(0);
 pub static IS_PAUSED: AtomicBool = AtomicBool::new(false);
 pub static LOG_SCROLL_OFFSET: AtomicUsize = AtomicUsize::new(0);
+pub static COMPRESSION_LEVEL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(6);
 
 pub fn get_log_buffer() -> &'static Arc<Mutex<Vec<String>>> {
     static LOG_BUFFER: OnceLock<Arc<Mutex<Vec<String>>>> = OnceLock::new();
@@ -117,6 +118,7 @@ fn main() {
     }
 
     let args = Args::parse();
+    COMPRESSION_LEVEL.store(args.level, Ordering::Relaxed);
 
     let compressor: Arc<Box<dyn Compressor + Send + Sync>> = Arc::new(match args.algo.as_str() {
         "gz" => Box::new(GzipCompressor { level: args.level }),

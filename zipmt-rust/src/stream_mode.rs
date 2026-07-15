@@ -70,7 +70,13 @@ pub fn compress_stream(
                                 }
                             }
                             crate::log_verbose!("Worker {} compressing block {}", worker_id, block.seq_num);
-                            let compressed = compressor.compress(&block.data);
+                            let tui_ref_inner = tui_ref.clone();
+                            let compressed = compressor.compress_with_progress(&block.data, &move |_, duration| {
+                                if let Some(ref tui) = tui_ref_inner {
+                                    let mut guard = tui.lock().unwrap();
+                                    guard.update_chunk_time(duration);
+                                }
+                            });
                             let compressed_len = compressed.as_ref().map(|v| v.len()).unwrap_or(0);
                             crate::log_verbose!(
                                 "Worker {} finished block {}: {} -> {} bytes",

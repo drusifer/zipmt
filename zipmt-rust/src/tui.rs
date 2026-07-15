@@ -59,6 +59,8 @@ pub struct TuiState {
     pub next_expected_seq: u64,
     // Compression level
     pub level: u32,
+    pub total_chunks_compressed: u64,
+    pub total_compress_time_ms: f64,
 }
 
 impl TuiState {
@@ -92,6 +94,8 @@ impl TuiState {
             output_buffer: Vec::new(),
             next_expected_seq: 0,
             level,
+            total_chunks_compressed: 0,
+            total_compress_time_ms: 0.0,
         }
     }
 
@@ -124,6 +128,21 @@ impl TuiState {
             output_buffer: Vec::new(),
             next_expected_seq: 0,
             level,
+            total_chunks_compressed: 0,
+            total_compress_time_ms: 0.0,
+        }
+    }
+
+    pub fn update_chunk_time(&mut self, duration: std::time::Duration) {
+        self.total_chunks_compressed += 1;
+        self.total_compress_time_ms += duration.as_secs_f64() * 1000.0;
+    }
+
+    pub fn get_avg_chunk_time_ms(&self) -> f64 {
+        if self.total_chunks_compressed > 0 {
+            self.total_compress_time_ms / self.total_chunks_compressed as f64
+        } else {
+            0.0
         }
     }
 }
@@ -252,6 +271,18 @@ pub fn run_tui_on_main_thread(
                                 let new_val = current.saturating_sub(50);
                                 crate::THROTTLE_DELAY_MS.store(new_val, Ordering::Relaxed);
                             }
+                            KeyCode::Char('[') => {
+                                let current = crate::COMPRESSION_LEVEL.load(Ordering::Relaxed);
+                                if current > 1 {
+                                    crate::COMPRESSION_LEVEL.store(current - 1, Ordering::Relaxed);
+                                }
+                            }
+                            KeyCode::Char(']') => {
+                                let current = crate::COMPRESSION_LEVEL.load(Ordering::Relaxed);
+                                if current < 9 {
+                                    crate::COMPRESSION_LEVEL.store(current + 1, Ordering::Relaxed);
+                                }
+                            }
                             KeyCode::Up => {
                                 let offset = crate::LOG_SCROLL_OFFSET.load(Ordering::Relaxed);
                                 crate::LOG_SCROLL_OFFSET.store(offset.saturating_sub(1), Ordering::Relaxed);
@@ -291,6 +322,7 @@ pub fn run_tui_on_main_thread(
             };
             state_guard.prev_total_in = total_in;
             state_guard.last_speed_update = now;
+            state_guard.level = crate::COMPRESSION_LEVEL.load(Ordering::Relaxed);
 
             state_guard.speed_history.push(speed);
             if state_guard.speed_history.len() > 35 {
@@ -812,12 +844,19 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
             TuiMode::Stream => "4.0MB".to_string(),
         };
         let qcap = state.queue_capacity;
+        let avg_time = state.get_avg_chunk_time_ms();
+        let avg_str = if avg_time > 0.0 {
+            format!("(avg:{:.1}ms)", avg_time)
+        } else {
+            "(avg:--)".to_string()
+        };
         let knobs_right = Line::from(vec![
             Span::styled("Knobs: ", style_purple),
             Span::styled(format!("P:{} ", pool_size), style_yellow),
             Span::styled(format!("C:{} ", chunk_size_str.replace("MB", "M")), style_yellow),
             Span::styled(format!("Q:{} ", qcap), style_yellow),
-            Span::styled(format!("L:{}", state.level), style_yellow),
+            Span::styled(format!("L:{} ", state.level), style_yellow),
+            Span::styled(avg_str, style_yellow),
         ]);
         render_row(f, row_rects[12], log_header_left, knobs_right);
 
