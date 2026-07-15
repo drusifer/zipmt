@@ -465,7 +465,7 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
 
                 // Row 3: Divider 1
                 f.render_widget(Paragraph::new(Line::from(Span::styled(
-                    "├───────────────────────────────────────┬──────────────────────────────────────┤",
+                    "├────────────────────────────────────────┬─────────────────────────────────────┤",
                     style_orange
                 ))), row_rects[3]);
 
@@ -515,7 +515,7 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
 
                 // Row 11: Divider 2
                 f.render_widget(Paragraph::new(Line::from(Span::styled(
-                    "├───────────────────────────────────────┼──────────────────────────────────────┤",
+                    "├────────────────────────────────────────┼─────────────────────────────────────┤",
                     style_orange
                 ))), row_rects[11]);
 
@@ -541,7 +541,7 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
 
                 // Row 14: Bottom border
                 f.render_widget(Paragraph::new(Line::from(Span::styled(
-                    "╰───────────────────────────────────────┴──────────────────────────────────────╯",
+                    "╰────────────────────────────────────────┴─────────────────────────────────────╯",
                     style_orange
                 ))), row_rects[14]);
             }
@@ -592,7 +592,7 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
 
                 // Row 3: Divider 1
                 f.render_widget(Paragraph::new(Line::from(Span::styled(
-                    "├───────────────────────────────────────┬──────────────────────────────────────┤",
+                    "├────────────────────────────────────────┬─────────────────────────────────────┤",
                     style_orange
                 ))), row_rects[3]);
 
@@ -639,7 +639,7 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
 
                 // Row 11: Divider 2
                 f.render_widget(Paragraph::new(Line::from(Span::styled(
-                    "├───────────────────────────────────────┼──────────────────────────────────────┤",
+                    "├────────────────────────────────────────┼─────────────────────────────────────┤",
                     style_orange
                 ))), row_rects[11]);
 
@@ -665,7 +665,7 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
 
                 // Row 14: Bottom border
                 f.render_widget(Paragraph::new(Line::from(Span::styled(
-                    "╰───────────────────────────────────────┴──────────────────────────────────────╯",
+                    "╰────────────────────────────────────────┴─────────────────────────────────────╯",
                     style_orange
                 ))), row_rects[14]);
             }

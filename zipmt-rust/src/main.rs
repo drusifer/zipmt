@@ -84,10 +84,6 @@ struct Args {
     /// Verbose output / metrics.
     #[arg(short, long)]
     verbose: bool,
-
-    /// Display terminal progress UI.
-    #[arg(short = 'T', long, default_value_t = false)]
-    tui: bool,
 }
 
 
@@ -274,7 +270,7 @@ fn run_app(args: Args, compressor: Arc<Box<dyn Compressor + Send + Sync>>) -> Re
 
     let writing_to_stdout = args.stdout || (is_stdin && args.output.is_none());
 
-    let run_tui = args.tui || force_tui || (
+    let run_tui = force_tui || (
         is_stderr_terminal
         && !(writing_to_stdout && is_stdout_terminal)
     );
