@@ -10,7 +10,7 @@ use ratatui::Terminal;
 use ratatui::style::{Color, Style, Modifier};
 use ratatui::text::{Line, Span};
 use ratatui::layout::{Rect, Layout, Constraint, Direction};
-use ratatui::widgets::{Paragraph, Clear};
+use ratatui::widgets::{Paragraph, Clear, Block, Borders, BorderType};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TuiMode {
@@ -351,7 +351,7 @@ pub fn run_tui_on_main_thread(
     }
 }
 
-fn render_history_chart(history: &[f64], height: usize) -> Vec<String> {
+fn render_history_chart(history: &[f64], height: usize, data_width: usize) -> Vec<String> {
     let mut chart_lines = vec![String::new(); height];
     let max_val = history.iter().copied().fold(0.0, f64::max);
     let scale = if max_val > 0.0 { max_val } else { 1.0 };
@@ -391,7 +391,6 @@ fn render_history_chart(history: &[f64], height: usize) -> Vec<String> {
         let mut row_str = String::new();
         row_str.push_str(label);
 
-        let data_width = 27usize;
         let padding = data_width.saturating_sub(history.len());
         row_str.push_str(&" ".repeat(padding));
 
@@ -450,7 +449,9 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
     let style_yellow = Style::default().fg(Color::Indexed(220));
 
     let pause_status = if crate::IS_PAUSED.load(Ordering::Relaxed) {
-        "PAUSED "
+        "PAUSED"
+    } else if state.is_complete {
+        "COMPLETE"
     } else {
         "RUNNING"
     };
@@ -485,168 +486,90 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
             22,
         );
 
-        // Split into 22 individual rows
-        let row_rects = Layout::default()
+        // Nested Grid Layout
+        let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints(vec![Constraint::Length(1); 22])
+            .constraints([
+                Constraint::Length(1),  // Title Row
+                Constraint::Length(12), // Body panels (Left: Status / Right: Speed Chart)
+                Constraint::Length(6),  // Logs (5 total height, 4 logs inner)
+                Constraint::Length(3),  // Footer Controls
+            ])
             .split(rect);
 
-        // Row helper for 3-column layout (left border, left content, mid divider, right content, right border)
-        let render_row = |f: &mut ratatui::Frame, y_rect: Rect, left_line: Line, right_line: Line| {
-            let cols = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Length(2),  // "│ "
-                    Constraint::Length(38), // Left content
-                    Constraint::Length(3),  // " │ "
-                    Constraint::Length(35), // Right content
-                    Constraint::Length(2),  // " │"
-                ])
-                .split(y_rect);
-            
-            f.render_widget(Paragraph::new(Line::from(Span::styled("│ ", style_orange))), cols[0]);
-            f.render_widget(Paragraph::new(left_line), cols[1]);
-            f.render_widget(Paragraph::new(Line::from(Span::styled(" │ ", style_orange))), cols[2]);
-            f.render_widget(Paragraph::new(right_line), cols[3]);
-            f.render_widget(Paragraph::new(Line::from(Span::styled(" │", style_orange))), cols[4]);
+        // --- 1. Title / Header Row ---
+        let status_color = match pause_status {
+            "PAUSED" => Color::Red,
+            "COMPLETE" => Color::Green,
+            _ => Color::Indexed(117), // Cyan-blue
         };
+        let title_line = Line::from(vec![
+            Span::styled("ZIPMT PIPELINE CONTROLLER ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled("═".repeat(38), style_orange),
+            Span::styled(format!(" [STATUS: {}]", pause_status), Style::default().fg(status_color).add_modifier(Modifier::BOLD)),
+        ]);
+        f.render_widget(Paragraph::new(title_line), chunks[0]);
 
-        // Row 0: Top border
-        let top_border = Paragraph::new(Line::from(Span::styled(
-            "┌─── LCARS COMMAND PANEL ─ [ SYSTEM: ACTIVE ] ─────────────────────────────────┐",
-            style_orange
-        )));
-        f.render_widget(top_border, row_rects[0]);
+        // --- 2. Body Panels ---
+        let body_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(41), // Left Panel: width 41
+                Constraint::Length(39), // Right Panel: width 39
+            ])
+            .split(chunks[1]);
 
+        // Left Panel Block
+        let left_block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(style_orange)
+            .title(Span::styled(" Transporter Status ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+
+        // Right Panel Block
+        let right_block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(style_orange)
+            .title(Span::styled(" Ingest Speed History ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+
+        // Render Left Panel Content
         match state.mode {
             TuiMode::Split => {
-                let mut total_in = 0;
-                let mut total_out = 0;
-
+                let mut lines = Vec::new();
                 for stripe in &state.stripes {
-                    total_in += stripe.bytes_processed;
-                    total_out += stripe.bytes_written;
-                }
-
-                let speed = if elapsed > 0.0 {
-                    total_in as f64 / elapsed
-                } else {
-                    0.0
-                };
-
-                let eta_str = if total_in == 0 {
-                    "Estimating...".to_string()
-                } else if total_in >= state.total_input_size {
-                    "0s (Complete)".to_string()
-                } else if speed > 0.0 {
-                    let remaining = state.total_input_size.saturating_sub(total_in);
-                    let eta_secs = (remaining as f64 / speed).round() as usize;
-                    format!("{}s", eta_secs)
-                } else {
-                    "--".to_string()
-                };
-
-                let ratio = if total_out > 0 {
-                    total_in as f64 / total_out as f64
-                } else {
-                    1.0
-                };
-
-                // Row 1: Ingested & Speed (Styled Labels)
-                let left_line_1 = Line::from(vec![
-                    Span::styled("Ingested : ", style_purple),
-                    Span::styled(format!("{:7.2}", total_in as f64 / (1024.0 * 1024.0)), style_cyan),
-                    Span::styled(" MB / ", style_purple),
-                    Span::styled(format!("{:7.2}", state.total_input_size as f64 / (1024.0 * 1024.0)), style_cyan),
-                    Span::styled(" MB", style_purple),
-                ]);
-                let right_line_1 = Line::from(vec![
-                    Span::styled("Speed: ", style_purple),
-                    Span::styled(format!("{:5.1}", speed / (1024.0 * 1024.0)), style_cyan),
-                    Span::styled(" MB/s", style_purple),
-                ]);
-                render_row(f, row_rects[1], left_line_1, right_line_1);
-
-                // Row 2: Output & Time (Styled Labels)
-                let left_line_2 = Line::from(vec![
-                    Span::styled("Output   : ", style_purple),
-                    Span::styled(format!("{:7.2}", total_out as f64 / (1024.0 * 1024.0)), style_cyan),
-                    Span::styled(" MB (", style_purple),
-                    Span::styled(format!("{:5.2}x", ratio), style_yellow),
-                    Span::styled(" Ratio)", style_purple),
-                ]);
-                let right_line_2 = Line::from(vec![
-                    Span::styled("Time : ", style_purple),
-                    Span::styled(format!("{:5.1}s", elapsed), style_cyan),
-                    Span::styled(" (ETA: ", style_purple),
-                    Span::styled(format!("{:<13}", eta_str), style_yellow),
-                    Span::styled(")", style_purple),
-                ]);
-                render_row(f, row_rects[2], left_line_2, right_line_2);
-
-                // Row 3: Divider 1
-                f.render_widget(Paragraph::new(Line::from(Span::styled(
-                    "├────────────────────────────────────────┬─────────────────────────────────────┤",
-                    style_orange
-                ))), row_rects[3]);
-
-                // Row 4: Body Headers
-                render_row(
-                    f,
-                    row_rects[4],
-                    Line::from(Span::styled("STRIPE SECTORS PROGRESS", style_purple)),
-                    Line::from(Span::styled("INGEST SPEED HISTORY (35s)", style_purple))
-                );
-
-                // Rows 5..10: Sectors Progress & History Chart
-                let chart_lines = render_history_chart(&state.speed_history, 6);
-                for r in 0..6 {
-                    let left_line = if r < state.stripes.len() {
-                        let stripe = &state.stripes[r];
-                        let pct = if stripe.total_bytes > 0 {
-                            (stripe.bytes_processed as f64 / stripe.total_bytes as f64) * 100.0
-                        } else {
-                            0.0
-                        };
-                        let bar_len = 15;
-                        let filled = std::cmp::min(((pct / 100.0) * bar_len as f64) as usize, bar_len);
-                        let bar: String = std::iter::repeat('█')
-                            .take(filled)
-                            .chain(std::iter::repeat('░').take(bar_len - filled))
-                            .collect();
-                        let stripe_ratio = if stripe.bytes_written > 0 {
-                            stripe.bytes_processed as f64 / stripe.bytes_written as f64
-                        } else {
-                            1.0
-                        };
-                        Line::from(vec![
-                            Span::styled(format!("Sec {:02}: ", stripe.id), style_purple),
-                            Span::styled(format!("[{}] ", bar), style_cyan),
-                            Span::styled(format!("{:3.0}%", pct), style_yellow),
-                            Span::styled(format!(" ({:4.1}x)", stripe_ratio), style_cyan),
-                        ])
+                    let total = stripe.total_bytes;
+                    let processed = stripe.bytes_processed;
+                    let pct = if total > 0 { (processed * 100) / total } else { 0 };
+                    
+                    let ratio = if stripe.bytes_written > 0 {
+                        processed as f64 / stripe.bytes_written as f64
                     } else {
-                        Line::from("")
+                        1.0
                     };
-
-                    let right_line = Line::from(Span::styled(chart_lines[r].clone(), style_yellow));
-                    render_row(f, row_rects[5 + r], left_line, right_line);
+                    
+                    let bar_len = 15;
+                    let filled = if total > 0 { std::cmp::min((processed * bar_len) / total, bar_len) } else { 0 };
+                    let bar: String = std::iter::repeat('█')
+                        .take(filled)
+                        .chain(std::iter::repeat('░').take(bar_len - filled))
+                        .collect();
+                        
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("Sec {:02}: ", stripe.id), style_purple),
+                        Span::styled(format!("[{}] ", bar), style_cyan),
+                        Span::styled(format!("{:3}% ", pct), style_yellow),
+                        Span::styled(format!("({:.1}x)", ratio), style_cyan),
+                    ]));
                 }
-
-                // Row 11: Divider 2
-                f.render_widget(Paragraph::new(Line::from(Span::styled(
-                    "├────────────────────────────────────────┼─────────────────────────────────────┤",
-                    style_orange
-                ))), row_rects[11]);
+                while lines.len() < 10 {
+                    lines.push(Line::from(""));
+                }
+                f.render_widget(Paragraph::new(lines).block(left_block), body_chunks[0]);
             }
             TuiMode::Stream => {
                 let speed_in = if elapsed > 0.0 {
                     state.bytes_read as f64 / elapsed
-                } else {
-                    0.0
-                };
-                let speed_out = if elapsed > 0.0 {
-                    state.bytes_written as f64 / elapsed
                 } else {
                     0.0
                 };
@@ -657,174 +580,138 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
                     1.0
                 };
 
-                let proj_1m = speed_in * 60.0;
-                let proj_5m = speed_in * 300.0;
-
-                // Row 1: Ingested & Speed
-                let left_line_1 = Line::from(vec![
+                let mut lines = Vec::new();
+                lines.push(Line::from(vec![
                     Span::styled("Ingested : ", style_purple),
                     Span::styled(format!("{:7.2}", state.bytes_read as f64 / (1024.0 * 1024.0)), style_cyan),
-                    Span::styled(" MB", style_purple),
-                ]);
-                let right_line_1 = Line::from(vec![
-                    Span::styled("Speed: ", style_purple),
+                    Span::styled(" MB / ", style_purple),
                     Span::styled(format!("{:5.1}", speed_in / (1024.0 * 1024.0)), style_cyan),
                     Span::styled(" MB/s", style_purple),
-                ]);
-                render_row(f, row_rects[1], left_line_1, right_line_1);
-
-                // Row 2: Output & Speed
-                let left_line_2 = Line::from(vec![
+                ]));
+                lines.push(Line::from(vec![
                     Span::styled("Output   : ", style_purple),
                     Span::styled(format!("{:7.2}", state.bytes_written as f64 / (1024.0 * 1024.0)), style_cyan),
                     Span::styled(" MB (", style_purple),
-                    Span::styled(format!("{:5.2}x", ratio), style_yellow),
+                    Span::styled(format!("{:.2}x", ratio), style_yellow),
                     Span::styled(" Ratio)", style_purple),
-                ]);
-                let right_line_2 = Line::from(vec![
-                    Span::styled("Speed: ", style_purple),
-                    Span::styled(format!("{:5.1}", speed_out / (1024.0 * 1024.0)), style_cyan),
-                    Span::styled(" MB/s", style_purple),
-                ]);
-                render_row(f, row_rects[2], left_line_2, right_line_2);
+                ]));
+                lines.push(Line::from(Span::styled("─".repeat(39), style_orange)));
 
-                // Row 3: Divider 1
-                f.render_widget(Paragraph::new(Line::from(Span::styled(
-                    "├────────────────────────────────────────┬─────────────────────────────────────┤",
-                    style_orange
-                ))), row_rects[3]);
-
-                // Row 4: Body Headers
-                render_row(
-                    f,
-                    row_rects[4],
-                    Line::from(Span::styled("TRANSPORTER BUFFER CAPACITY", style_purple)),
-                    Line::from(Span::styled("INGEST SPEED HISTORY (35s)", style_purple))
-                );
-
-                // Rows 5..10: Transporter Buffer & Projections & Speed History Chart
-                let chart_lines = render_history_chart(&state.speed_history, 6);
-                for r in 0..6 {
-                    let left_line = if r == 0 {
-                        let queue_list = if state.input_queue.is_empty() {
-                            "[]".to_string()
-                        } else {
-                            let mut s = format!("{:?}", state.input_queue);
-                            if s.len() > 22 {
-                                let mut items = Vec::new();
-                                for x in &state.input_queue {
-                                    let next_s = format!("{:?}", items);
-                                    if next_s.len() > 14 {
-                                        items.push("..".to_string());
-                                        break;
-                                    }
-                                    items.push(x.to_string());
-                                }
-                                s = format!("[{}]", items.join(","));
+                let queue_list = if state.input_queue.is_empty() {
+                    "[]".to_string()
+                } else {
+                    let mut s = format!("{:?}", state.input_queue);
+                    if s.len() > 22 {
+                        let mut items = Vec::new();
+                        for x in &state.input_queue {
+                            let next_s = format!("{:?}", items);
+                            if next_s.len() > 14 {
+                                items.push("..".to_string());
+                                break;
                             }
-                            s
-                        };
-                        Line::from(vec![
-                            Span::styled("Queue: ", style_purple),
-                            Span::styled(queue_list, style_cyan),
-                            Span::styled(format!(" ({}/{} blk)", state.queue_depth, state.queue_capacity), style_yellow),
-                        ])
-                    } else if r == 1 {
-                        let mut w_parts = Vec::new();
-                        if state.workers.len() > 0 {
-                            let w = &state.workers[0];
-                            w_parts.push(Span::styled(format!("W00:[{:<4}] ", w.status), style_purple));
-                            w_parts.push(Span::styled(w.current_chunk.map(|c| format!("#{:<3}", c)).unwrap_or_else(|| "-- ".to_string()), style_cyan));
+                            items.push(x.to_string());
                         }
-                        if state.workers.len() > 1 {
-                            w_parts.push(Span::styled("   ", style_purple));
-                            let w = &state.workers[1];
-                            w_parts.push(Span::styled(format!("W01:[{:<4}] ", w.status), style_purple));
-                            w_parts.push(Span::styled(w.current_chunk.map(|c| format!("#{:<3}", c)).unwrap_or_else(|| "-- ".to_string()), style_cyan));
-                        }
-                        Line::from(w_parts)
-                    } else if r == 2 {
-                        let mut w_parts = Vec::new();
-                        if state.workers.len() > 2 {
-                            let w = &state.workers[2];
-                            w_parts.push(Span::styled(format!("W02:[{:<4}] ", w.status), style_purple));
-                            w_parts.push(Span::styled(w.current_chunk.map(|c| format!("#{:<3}", c)).unwrap_or_else(|| "-- ".to_string()), style_cyan));
-                        }
-                        if state.workers.len() > 3 {
-                            w_parts.push(Span::styled("   ", style_purple));
-                            let w = &state.workers[3];
-                            w_parts.push(Span::styled(format!("W03:[{:<4}] ", w.status), style_purple));
-                            w_parts.push(Span::styled(w.current_chunk.map(|c| format!("#{:<3}", c)).unwrap_or_else(|| "-- ".to_string()), style_cyan));
-                        }
-                        Line::from(w_parts)
-                    } else if r == 3 {
-                        let out_queue_list = if state.output_buffer.is_empty() {
-                            "[]".to_string()
-                        } else {
-                            let mut s = format!("{:?}", state.output_buffer);
-                            if s.len() > 18 {
-                                let mut items = Vec::new();
-                                for x in &state.output_buffer {
-                                    let next_s = format!("{:?}", items);
-                                    if next_s.len() > 10 {
-                                        items.push("..".to_string());
-                                        break;
-                                    }
-                                    items.push(x.to_string());
-                                }
-                                s = format!("[{}]", items.join(","));
-                            }
-                            s
-                        };
-                        Line::from(vec![
-                            Span::styled("Out Q: ", style_purple),
-                            Span::styled(out_queue_list, style_cyan),
-                            Span::styled(format!(" (Next: #{})", state.next_expected_seq), style_yellow),
-                        ])
-                    } else if r == 4 {
-                        let gap_str = if !state.output_buffer.is_empty() && state.output_buffer[0] > state.next_expected_seq {
-                            format!("GAP AT #{}", state.next_expected_seq)
-                        } else {
-                            "NO GAPS".to_string()
-                        };
-                        let style = if gap_str.starts_with("GAP") {
-                            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default().fg(Color::Green)
-                        };
-                        Line::from(vec![
-                            Span::styled("Gaps : ", style_purple),
-                            Span::styled(gap_str, style),
-                        ])
-                    } else {
-                        Line::from(vec![
-                            Span::styled("Target 1m: ", style_purple),
-                            Span::styled(format!("{:5.1}M", proj_1m / (1024.0 * 1024.0)), style_cyan),
-                            Span::styled("  5m: ", style_purple),
-                            Span::styled(format!("{:5.1}M", proj_5m / (1024.0 * 1024.0)), style_cyan),
-                        ])
-                    };
+                        s = format!("[{}]", items.join(","));
+                    }
+                    s
+                };
+                lines.push(Line::from(vec![
+                    Span::styled("Queue: ", style_purple),
+                    Span::styled(queue_list, style_cyan),
+                    Span::styled(format!(" ({}/{} blk)", state.queue_depth, state.queue_capacity), style_yellow),
+                ]));
 
-                    let right_line = Line::from(Span::styled(chart_lines[r].clone(), style_yellow));
-                    render_row(f, row_rects[5 + r], left_line, right_line);
+                let mut w_parts_1 = Vec::new();
+                if state.workers.len() > 0 {
+                    let w = &state.workers[0];
+                    w_parts_1.push(Span::styled(format!("W00:[{:<4}] ", w.status), style_purple));
+                    w_parts_1.push(Span::styled(w.current_chunk.map(|c| format!("#{:<3}", c)).unwrap_or_else(|| "-- ".to_string()), style_cyan));
                 }
+                if state.workers.len() > 1 {
+                    w_parts_1.push(Span::styled("   ", style_purple));
+                    let w = &state.workers[1];
+                    w_parts_1.push(Span::styled(format!("W01:[{:<4}] ", w.status), style_purple));
+                    w_parts_1.push(Span::styled(w.current_chunk.map(|c| format!("#{:<3}", c)).unwrap_or_else(|| "-- ".to_string()), style_cyan));
+                }
+                lines.push(Line::from(w_parts_1));
 
-                // Row 11: Divider 2
-                f.render_widget(Paragraph::new(Line::from(Span::styled(
-                    "├────────────────────────────────────────┼─────────────────────────────────────┤",
-                    style_orange
-                ))), row_rects[11]);
+                let mut w_parts_2 = Vec::new();
+                if state.workers.len() > 2 {
+                    let w = &state.workers[2];
+                    w_parts_2.push(Span::styled(format!("W02:[{:<4}] ", w.status), style_purple));
+                    w_parts_2.push(Span::styled(w.current_chunk.map(|c| format!("#{:<3}", c)).unwrap_or_else(|| "-- ".to_string()), style_cyan));
+                }
+                if state.workers.len() > 3 {
+                    w_parts_2.push(Span::styled("   ", style_purple));
+                    let w = &state.workers[3];
+                    w_parts_2.push(Span::styled(format!("W03:[{:<4}] ", w.status), style_purple));
+                    w_parts_2.push(Span::styled(w.current_chunk.map(|c| format!("#{:<3}", c)).unwrap_or_else(|| "-- ".to_string()), style_cyan));
+                }
+                lines.push(Line::from(w_parts_2));
+
+                let out_queue_list = if state.output_buffer.is_empty() {
+                    "[]".to_string()
+                } else {
+                    let mut s = format!("{:?}", state.output_buffer);
+                    if s.len() > 18 {
+                        let mut items = Vec::new();
+                        for x in &state.output_buffer {
+                            let next_s = format!("{:?}", items);
+                            if next_s.len() > 10 {
+                                items.push("..".to_string());
+                                break;
+                            }
+                            items.push(x.to_string());
+                        }
+                        s = format!("[{}]", items.join(","));
+                    }
+                    s
+                };
+                lines.push(Line::from(vec![
+                    Span::styled("Out Q: ", style_purple),
+                    Span::styled(out_queue_list, style_cyan),
+                    Span::styled(format!(" (Next: #{})", state.next_expected_seq), style_yellow),
+                ]));
+
+                let gap_str = if !state.output_buffer.is_empty() && state.output_buffer[0] > state.next_expected_seq {
+                    format!("GAP AT #{}", state.next_expected_seq)
+                } else {
+                    "NO GAPS".to_string()
+                };
+                let gap_style = if gap_str.starts_with("GAP") {
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::Green)
+                };
+                lines.push(Line::from(vec![
+                    Span::styled("Gaps : ", style_purple),
+                    Span::styled(gap_str, gap_style),
+                ]));
+
+                let proj_1m = speed_in * 60.0;
+                let proj_5m = speed_in * 300.0;
+                lines.push(Line::from(vec![
+                    Span::styled("Target 1m: ", style_purple),
+                    Span::styled(format!("{:5.1}M", proj_1m / (1024.0 * 1024.0)), style_cyan),
+                    Span::styled("  5m: ", style_purple),
+                    Span::styled(format!("{:5.1}M", proj_5m / (1024.0 * 1024.0)), style_cyan),
+                ]));
+
+                while lines.len() < 10 {
+                    lines.push(Line::from(""));
+                }
+                f.render_widget(Paragraph::new(lines).block(left_block), body_chunks[0]);
             }
         }
 
-        // Row 12: Logs Header Panel (with Knobs info on the right)
-        let log_header_left = Line::from(vec![
-            Span::styled("SYSTEM LOG MESSAGES (SCROLL: ", style_purple),
-            Span::styled("▲", Style::default().fg(Color::Black).bg(Color::Indexed(147)).add_modifier(Modifier::BOLD)),
-            Span::styled("/", style_purple),
-            Span::styled("▼", Style::default().fg(Color::Black).bg(Color::Indexed(147)).add_modifier(Modifier::BOLD)),
-            Span::styled(")", style_purple),
-        ]);
+        // Render Right Panel Content (Speed Chart)
+        let chart_lines = render_history_chart(&state.speed_history, 10, 29);
+        let chart_paragraph = Paragraph::new(
+            chart_lines.into_iter().map(|l| Line::from(Span::styled(l, style_yellow))).collect::<Vec<_>>()
+        ).block(right_block);
+        f.render_widget(chart_paragraph, body_chunks[1]);
+
+        // --- 3. Logs Section ---
         let pool_size = if state.mode == TuiMode::Split {
             state.stripes.len()
         } else {
@@ -850,17 +737,21 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
         } else {
             "(avg:--)".to_string()
         };
-        let knobs_right = Line::from(vec![
-            Span::styled("Knobs: ", style_purple),
-            Span::styled(format!("P:{} ", pool_size), style_yellow),
-            Span::styled(format!("C:{} ", chunk_size_str.replace("MB", "M")), style_yellow),
-            Span::styled(format!("Q:{} ", qcap), style_yellow),
-            Span::styled(format!("L:{} ", state.level), style_yellow),
-            Span::styled(avg_str, style_yellow),
-        ]);
-        render_row(f, row_rects[12], log_header_left, knobs_right);
 
-        // Rows 13..17: 5 Scrollable Log Content Rows (full-width spanning)
+        let logs_title = format!(
+            " Log Messages (▲/▼) ── Knobs: P:{} C:{} Q:{} L:{} {} ",
+            pool_size,
+            chunk_size_str.replace("MB", "M"),
+            qcap,
+            state.level,
+            avg_str
+        );
+        let logs_block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(style_orange)
+            .title(Span::styled(logs_title, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+
         let logs = if let Ok(buffer) = crate::get_log_buffer().lock() {
             buffer.clone()
         } else {
@@ -868,85 +759,46 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
         };
 
         let scroll_offset = crate::LOG_SCROLL_OFFSET.load(Ordering::Relaxed);
-        let max_offset = logs.len().saturating_sub(5);
+        let max_offset = logs.len().saturating_sub(4); // 4 rows inner height
         let offset = std::cmp::min(scroll_offset, max_offset);
-        crate::LOG_SCROLL_OFFSET.store(offset, Ordering::Relaxed); // Cap/sync offset state
+        crate::LOG_SCROLL_OFFSET.store(offset, Ordering::Relaxed);
 
-        for r in 0..5 {
-            let cols = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Length(2),  // "│ "
-                    Constraint::Length(76), // Full-width log content area
-                    Constraint::Length(2),  // " │"
-                ])
-                .split(row_rects[13 + r]);
-
-            f.render_widget(Paragraph::new(Line::from(Span::styled("│ ", style_orange))), cols[0]);
-            
+        let mut log_lines = Vec::new();
+        for r in 0..4 {
             if offset + r < logs.len() {
                 let line_str = &logs[offset + r];
-                let truncated_line = if line_str.len() > 76 {
+                let truncated = if line_str.len() > 76 {
                     format!("{}...", &line_str[..73])
                 } else {
                     line_str.clone()
                 };
-                f.render_widget(Paragraph::new(Line::from(Span::styled(truncated_line, style_cyan))), cols[1]);
+                log_lines.push(Line::from(Span::styled(truncated, style_cyan)));
             } else {
-                f.render_widget(Paragraph::new(Line::from("")), cols[1]);
+                log_lines.push(Line::from(""));
             }
-
-            f.render_widget(Paragraph::new(Line::from(Span::styled(" │", style_orange))), cols[2]);
         }
+        f.render_widget(Paragraph::new(log_lines).block(logs_block), chunks[2]);
 
-        // Row 18: Divider 3 (Log panel border)
-        f.render_widget(Paragraph::new(Line::from(Span::styled(
-            "├──────────────────────────────────────────────────────────────────────────────┤",
-            style_orange
-        ))), row_rects[18]);
+        // --- 4. Footer Controls ---
+        let footer_block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(style_orange)
+            .title(Span::styled(" Pipeline Controls ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
 
-        // Row 19: Controls 1 (Styled Buttons & States)
-        let left_line_1 = Line::from(vec![
-            Span::styled("CONTROLS: ", style_purple),
-            Span::styled("[", style_purple),
-            Span::styled("P", Style::default().fg(Color::Black).bg(Color::Indexed(147)).add_modifier(Modifier::BOLD)),
-            Span::styled("] Pause  ", style_purple),
-            Span::styled("[", style_purple),
-            Span::styled("-", Style::default().fg(Color::Black).bg(Color::Indexed(147)).add_modifier(Modifier::BOLD)),
-            Span::styled("] Slow Down", style_purple),
-        ]);
-        let filled_slider = ((throttle_delay as f64 / 500.0) * 10.0).round() as usize;
+        let filled_slider = ((throttle_delay as f64 / 500.0) * 8.0).round() as usize;
         let slider_bar: String = std::iter::repeat('█').take(filled_slider)
-            .chain(std::iter::repeat('░').take(10 - filled_slider))
+            .chain(std::iter::repeat('░').take(8 - filled_slider))
             .collect();
-        let right_line_1 = Line::from(vec![
-            Span::styled("Throt: ", style_purple),
-            Span::styled(format!("[{}] ", slider_bar), style_cyan),
-            Span::styled(format!("{:3}ms", throttle_delay), style_yellow),
-        ]);
-        render_row(f, row_rects[19], left_line_1, right_line_1);
 
-        // Row 20: Controls 2
-        let left_line_2 = Line::from(vec![
-            Span::styled("          ", style_purple),
-            Span::styled("[", style_purple),
-            Span::styled("+", Style::default().fg(Color::Black).bg(Color::Indexed(147)).add_modifier(Modifier::BOLD)),
-            Span::styled("] Speed Up  ", style_purple),
-            Span::styled("[", style_purple),
-            Span::styled("Q", Style::default().fg(Color::White).bg(Color::Red).add_modifier(Modifier::BOLD)),
-            Span::styled("] Abort", style_purple),
-        ]);
-        let right_line_2 = Line::from(vec![
-            Span::styled("        STATE   : ", style_purple),
-            Span::styled(format!("{:7}", pause_status), if pause_status.trim() == "PAUSED" { Style::default().fg(Color::Red).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::Green).add_modifier(Modifier::BOLD) }),
-        ]);
-        render_row(f, row_rects[20], left_line_2, right_line_2);
+        let left_footer = Span::styled("CTRL: [P]Pause [-/+]Slow/Speed [[]/[]]Lvl-/+ [Q]Abort", style_purple);
+        let right_footer = format!("  Throt:[{}] {:3}ms", slider_bar, throttle_delay);
 
-        // Row 21: Bottom border
-        f.render_widget(Paragraph::new(Line::from(Span::styled(
-            "╰────────────────────────────────────────┴─────────────────────────────────────╯",
-            style_orange
-        ))), row_rects[21]);
+        let footer_line = Line::from(vec![
+            left_footer,
+            Span::styled(right_footer, style_yellow),
+        ]);
+        f.render_widget(Paragraph::new(footer_line).block(footer_block), chunks[3]);
     })?;
 
     Ok(())
@@ -1074,14 +926,14 @@ mod tests {
         draw_tui(&mut terminal, &state).unwrap();
         
         let buffer = terminal.backend().buffer();
-        let mut row_2_str = String::new();
+        let mut row_3_str = String::new();
         for x in 0..80 {
-            row_2_str.push_str(buffer.get(x, 1).symbol());
+            row_3_str.push_str(buffer.get(x, 2).symbol());
         }
         assert!(
-            row_2_str.contains("┌───"),
-            "Row 2 (0-indexed 1) must contain the top border ┌───, got: {:?}",
-            row_2_str
+            row_3_str.contains("╭"),
+            "Row 3 (0-indexed 2) must contain the top border ╭, got: {:?}",
+            row_3_str
         );
     }
 
@@ -1096,14 +948,14 @@ mod tests {
         draw_tui(&mut terminal, &state).unwrap();
 
         let buffer = terminal.backend().buffer();
-        let mut row_10_str = String::new();
+        let mut row_11_str = String::new();
         for x in 0..120 {
-            row_10_str.push_str(buffer.get(x, 9).symbol());
+            row_11_str.push_str(buffer.get(x, 10).symbol());
         }
         assert!(
-            row_10_str[20..].starts_with("┌───"),
-            "Row 10 (0-indexed 9) starting at col 20 must contain the top border ┌───, got: {:?}",
-            row_10_str
+            row_11_str[20..].starts_with("╭"),
+            "Row 11 (0-indexed 10) starting at col 20 must contain the top border ╭, got: {:?}",
+            row_11_str
         );
     }
 
