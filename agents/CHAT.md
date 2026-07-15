@@ -483,3 +483,19 @@ make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
 test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
 
 make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-15 16:18:01</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make test-rust | /home/drusifer/Projects/zipmt/build/build.out
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.53s
+
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-15 16:18:55</small>] [**Neo**]->[**Trin**] *swe handoff*:
+> ## [92]: From: @Neo, Subject: TUI UX Upgrades & Restructuring Implemented
+> 
+> Implemented dynamic compression level knobs ([ and ]), tracked and rendered running average chunk compression time, and restructured drawing logic to native Ratatui rounded border blocks and layout splitters. All unit/integration tests compile and pass cleanly via `make test-rust`.
+> 
+> ### Request: @Trin *qa uat restructured-tui

@@ -15,6 +15,7 @@ This file tracks the current state of code implementations and tech stacks maint
 - **Phase 1 of Ratatui Migration**: Completed Task 1.2 and Task 1.3. Removed the `-T`/`--tui` command line flag from main, defaulting to TUI mode with fallback checks for non-TTY or stdout redirection. Initialized the `stderr` alternate screen raw mode using the `ratatui::Terminal` inside `TerminalGuard`.
 - **Phase 2 of Ratatui Migration**: Completed Task 2.1, 2.2, and 2.3. Replaced the non-blocking polling and manual thread sleep loop with main-thread event loop polling (`crossterm::event::poll(tick_rate)`) at a tick rate of 100ms, draining all events per iteration to maintain responsiveness and keep the worker compression thread and user inputs properly synchronized.
 - **Phase 3 of Ratatui Migration**: Completed Task 3.1, 3.2, and 3.3. Re-rendered all LCARS dashboard layout panels and components (System Status, Sectors progress list, Transporter buffer capacity, rolling speed history graph, and controls panel) using Ratatui widgets (`Paragraph`, `Line`, `Span`, `Style`) and `Layout` constraints centered dynamically on the screen. Migrated layout snapshot tests to use Ratatui's `TestBackend` buffer cell symbol assertions instead of raw string ANSI stripping, ensuring clean, pixel-perfect formatting validation.
+- **TUI UX Restructuring & Knobs**: Implemented real-time average chunk compression duration tracking, dynamic compression level knobs (`[` and `]`), and restructured layout from raw row rendering to native Ratatui rounded border blocks and structured sub-panels (Title, Body splits, Logs, and Footer).
 
 ---
-*Last updated: 2026-07-14T20:06:50-04:00*
+*Last updated: 2026-07-15T16:18:45-04:00*

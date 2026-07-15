@@ -2,16 +2,21 @@
 
 **Status:** Completed
 **Assigned to:** Neo
-**Started:** 2026-07-14T20:03:31
-**Finished:** 2026-07-14T20:06:55
+**Started:** 2026-07-15T15:00:00
+**Finished:** 2026-07-15T16:18:50
 
 ## Task Description
-Implement Phase 3 of the TUI Ratatui Migration sprint, which includes migrating the LCARS layouts and panels (System status, Split mode stripes progress, Stream mode Transporter buffer, speed history graph, controls panel) to Ratatui widgets and layouts, and migrating the TUI layout snapshot tests in `src/tui.rs` to use Ratatui's `TestBackend` for buffer-based assertions.
+Implement the TUI UX Restructuring and knobs adjustments:
+1. Track average chunk compression time dynamically and display it.
+2. Enable real-time adjustment of compression level knobs (`[` and `]`).
+3. Restructure TUI layout rendering to use native Ratatui layouts, blocks, and rounded borders.
+4. Verify all tests compile, pass, and layout snapshots are updated.
 
 ## Progress
-- [x] Task 3.1: Re-render the LCARS layouts and panels (System status, Split mode stripes list, Stream mode queue depth gauge, rolling speed history graph, controls panel) using Ratatui widgets and layouts, preserving the retro coloring and block theme. (Done by Neo)
-- [x] Task 3.2: Migrate the TUI layout snapshot tests in `src/tui.rs` to use Ratatui's `TestBackend` for buffer-based snapshot assertions. (Done by Neo)
-- [x] Task 3.3: Run `make test-rust` to check that all tests compile and pass cleanly. (Done by Neo)
+- [x] Task 4.1: Track and render average chunk compression time. (Done by Neo)
+- [x] Task 4.2: Implement dynamic knobs adjustment for level using `[` and `]`. (Done by Neo)
+- [x] Task 4.3: Restructure TUI rendering to use rounded blocks and nested layout constraints. (Done by Neo)
+- [x] Task 4.4: Verify tests pass and update snapshot assertions. (Done by Neo)
 
 ## Blockers
 None
@@ -20,4 +25,4 @@ None
 None yet
 
 ---
-*Last updated: 2026-07-14T20:06:55-04:00*
+*Last updated: 2026-07-15T16:18:50-04:00*
