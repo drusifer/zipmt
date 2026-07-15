@@ -77,3 +77,14 @@ This document indexes critical lessons learned during the development, compilati
 - **The Issue:** Under heavy event generation (e.g., dragging to resize the terminal window, or holding down speed adjustment/throttling keys), polling once per loop iteration introduces event lag. The queue of terminal inputs becomes backlogged, causing sluggish user responsiveness.
 - **The Solution:** Once `event::poll(tick_rate)` returns true, execute a nested non-blocking loop `while event::poll(Duration::from_millis(0)).unwrap_or(false)` to read and process all pending events in the queue in a single frame.
 - **The Rule:** When handling input events in crossterm, always wrap the event read in an inner loop polling with zero-duration to drain all immediately pending inputs, preventing command lag.
+
+---
+
+## 8. Lesson: Commitment to Breaking Changes and Structural Consistency
+- **Date:** 2026-07-14
+- > **Tags:** #Process #Design #Consistency #BreakingChanges
+- **Context:** When defaulting the TUI in `zipmt-rust`, the team removed the `-T` flag but kept references to it in integration tests, and missed that stream mode's pipeline logic was disabled by the fallback rules.
+- **The Issue:** Partial breaking changes are worse than clean ones. Removing a CLI option but leaving testing scripts and adjacent systems expecting it, or neglecting compatibility in dependent sub-modes, creates structural bugs and confusing UX.
+- **The Solution:** If you break it, break it all the way. Align all files, test pipelines, environments, and documentations to the new architecture. Do not leave "dangling" legacy configurations or partial transitions.
+- **The Rule:** A breaking change must be executed atomically across the entire codebase—including tests, scripts, and documentations.
+
