@@ -7,7 +7,7 @@ use crossterm::event::{self, Event, KeyCode};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Style, Modifier};
 use ratatui::text::{Line, Span};
 use ratatui::layout::{Rect, Layout, Constraint, Direction};
 use ratatui::widgets::{Paragraph, Clear};
@@ -378,7 +378,7 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
             .split(rect);
 
         // Row helper for 3-column layout (left border, left content, mid divider, right content, right border)
-        let render_row = |f: &mut ratatui::Frame, y_rect: Rect, left_span: Span, right_span: Span| {
+        let render_row = |f: &mut ratatui::Frame, y_rect: Rect, left_line: Line, right_line: Line| {
             let cols = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
@@ -391,9 +391,9 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
                 .split(y_rect);
             
             f.render_widget(Paragraph::new(Line::from(Span::styled("│ ", style_orange))), cols[0]);
-            f.render_widget(Paragraph::new(Line::from(left_span)), cols[1]);
+            f.render_widget(Paragraph::new(left_line), cols[1]);
             f.render_widget(Paragraph::new(Line::from(Span::styled(" │ ", style_orange))), cols[2]);
-            f.render_widget(Paragraph::new(Line::from(right_span)), cols[3]);
+            f.render_widget(Paragraph::new(right_line), cols[3]);
             f.render_widget(Paragraph::new(Line::from(Span::styled(" │", style_orange))), cols[4]);
         };
 
@@ -438,30 +438,37 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
                     1.0
                 };
 
-                // Row 1: Ingested & Speed
-                let left_str_1 = format!(
-                    "Ingested : {:7.2} MB / {:7.2} MB",
-                    total_in as f64 / (1024.0 * 1024.0),
-                    state.total_input_size as f64 / (1024.0 * 1024.0)
-                );
-                let right_str_1 = format!(
-                    "Speed: {:5.1} MB/s",
-                    speed / (1024.0 * 1024.0)
-                );
-                render_row(f, row_rects[1], Span::styled(left_str_1, style_cyan), Span::styled(right_str_1, style_cyan));
+                // Row 1: Ingested & Speed (Styled Labels)
+                let left_line_1 = Line::from(vec![
+                    Span::styled("Ingested : ", style_purple),
+                    Span::styled(format!("{:7.2}", total_in as f64 / (1024.0 * 1024.0)), style_cyan),
+                    Span::styled(" MB / ", style_purple),
+                    Span::styled(format!("{:7.2}", state.total_input_size as f64 / (1024.0 * 1024.0)), style_cyan),
+                    Span::styled(" MB", style_purple),
+                ]);
+                let right_line_1 = Line::from(vec![
+                    Span::styled("Speed: ", style_purple),
+                    Span::styled(format!("{:5.1}", speed / (1024.0 * 1024.0)), style_cyan),
+                    Span::styled(" MB/s", style_purple),
+                ]);
+                render_row(f, row_rects[1], left_line_1, right_line_1);
 
-                // Row 2: Output & Time
-                let left_str_2 = format!(
-                    "Output   : {:7.2} MB ({:5.2}x Ratio)",
-                    total_out as f64 / (1024.0 * 1024.0),
-                    ratio
-                );
-                let right_str_2 = format!(
-                    "Time : {:5.1}s (ETA: {:<13})",
-                    elapsed,
-                    eta_str
-                );
-                render_row(f, row_rects[2], Span::styled(left_str_2, style_cyan), Span::styled(right_str_2, style_cyan));
+                // Row 2: Output & Time (Styled Labels)
+                let left_line_2 = Line::from(vec![
+                    Span::styled("Output   : ", style_purple),
+                    Span::styled(format!("{:7.2}", total_out as f64 / (1024.0 * 1024.0)), style_cyan),
+                    Span::styled(" MB (", style_purple),
+                    Span::styled(format!("{:5.2}x", ratio), style_yellow),
+                    Span::styled(" Ratio)", style_purple),
+                ]);
+                let right_line_2 = Line::from(vec![
+                    Span::styled("Time : ", style_purple),
+                    Span::styled(format!("{:5.1}s", elapsed), style_cyan),
+                    Span::styled(" (ETA: ", style_purple),
+                    Span::styled(format!("{:<13}", eta_str), style_yellow),
+                    Span::styled(")", style_purple),
+                ]);
+                render_row(f, row_rects[2], left_line_2, right_line_2);
 
                 // Row 3: Divider 1
                 f.render_widget(Paragraph::new(Line::from(Span::styled(
@@ -473,14 +480,14 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
                 render_row(
                     f,
                     row_rects[4],
-                    Span::styled("STRIPE SECTORS PROGRESS", style_purple),
-                    Span::styled("INGEST SPEED HISTORY (35s)", style_purple)
+                    Line::from(Span::styled("STRIPE SECTORS PROGRESS", style_purple)),
+                    Line::from(Span::styled("INGEST SPEED HISTORY (35s)", style_purple))
                 );
 
                 // Rows 5..10: Sectors Progress & History Chart
                 let chart_lines = render_history_chart(&state.speed_history, 6);
                 for r in 0..6 {
-                    let left_span = if r < state.stripes.len() {
+                    let left_line = if r < state.stripes.len() {
                         let stripe = &state.stripes[r];
                         let pct = if stripe.total_bytes > 0 {
                             (stripe.bytes_processed as f64 / stripe.total_bytes as f64) * 100.0
@@ -498,19 +505,18 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
                         } else {
                             1.0
                         };
-                        Span::styled(format!(
-                            "Sec {:02}: [{}] {:3.0}% ({:4.1}x)",
-                            stripe.id,
-                            bar,
-                            pct,
-                            stripe_ratio
-                        ), style_cyan)
+                        Line::from(vec![
+                            Span::styled(format!("Sec {:02}: ", stripe.id), style_purple),
+                            Span::styled(format!("[{}] ", bar), style_cyan),
+                            Span::styled(format!("{:3.0}%", pct), style_yellow),
+                            Span::styled(format!(" ({:4.1}x)", stripe_ratio), style_cyan),
+                        ])
                     } else {
-                        Span::raw("")
+                        Line::from("")
                     };
 
-                    let right_span = Span::styled(chart_lines[r].clone(), style_yellow);
-                    render_row(f, row_rects[5 + r], left_span, right_span);
+                    let right_line = Line::from(Span::styled(chart_lines[r].clone(), style_yellow));
+                    render_row(f, row_rects[5 + r], left_line, right_line);
                 }
 
                 // Row 11: Divider 2
@@ -519,25 +525,37 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
                     style_orange
                 ))), row_rects[11]);
 
-                // Row 12: Controls 1
-                let control_left_1 = "CONTROLS: [P] Pause  [-] Slow Down";
-                let control_right_1 = format!("STATUS: THROTTLE: {:3}ms", throttle_delay);
-                render_row(
-                    f,
-                    row_rects[12],
-                    Span::styled(control_left_1, style_purple),
-                    Span::styled(control_right_1, style_purple)
-                );
+                // Row 12: Controls 1 (Styled Buttons & States)
+                let left_line_1 = Line::from(vec![
+                    Span::styled("CONTROLS: ", style_purple),
+                    Span::styled("[", style_purple),
+                    Span::styled("P", Style::default().fg(Color::Black).bg(Color::Indexed(147)).add_modifier(Modifier::BOLD)),
+                    Span::styled("] Pause  ", style_purple),
+                    Span::styled("[", style_purple),
+                    Span::styled("-", Style::default().fg(Color::Black).bg(Color::Indexed(147)).add_modifier(Modifier::BOLD)),
+                    Span::styled("] Slow Down", style_purple),
+                ]);
+                let right_line_1 = Line::from(vec![
+                    Span::styled("STATUS: THROTTLE: ", style_purple),
+                    Span::styled(format!("{:3}ms", throttle_delay), style_yellow),
+                ]);
+                render_row(f, row_rects[12], left_line_1, right_line_1);
 
                 // Row 13: Controls 2
-                let control_left_2 = "          [+] Speed Up  [Q] Abort";
-                let control_right_2 = format!("        STATE   : {:7}", pause_status);
-                render_row(
-                    f,
-                    row_rects[13],
-                    Span::styled(control_left_2, style_orange),
-                    Span::styled(control_right_2, style_orange)
-                );
+                let left_line_2 = Line::from(vec![
+                    Span::styled("          ", style_purple),
+                    Span::styled("[", style_purple),
+                    Span::styled("+", Style::default().fg(Color::Black).bg(Color::Indexed(147)).add_modifier(Modifier::BOLD)),
+                    Span::styled("] Speed Up  ", style_purple),
+                    Span::styled("[", style_purple),
+                    Span::styled("Q", Style::default().fg(Color::White).bg(Color::Red).add_modifier(Modifier::BOLD)),
+                    Span::styled("] Abort", style_purple),
+                ]);
+                let right_line_2 = Line::from(vec![
+                    Span::styled("        STATE   : ", style_purple),
+                    Span::styled(format!("{:7}", pause_status), if pause_status.trim() == "PAUSED" { Style::default().fg(Color::Red).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::Green).add_modifier(Modifier::BOLD) }),
+                ]);
+                render_row(f, row_rects[13], left_line_2, right_line_2);
 
                 // Row 14: Bottom border
                 f.render_widget(Paragraph::new(Line::from(Span::styled(
@@ -568,27 +586,32 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
                 let proj_10m = speed_in * 600.0;
 
                 // Row 1: Ingested & Speed
-                let left_str = format!(
-                    "Ingested : {:7.2} MB",
-                    state.bytes_read as f64 / (1024.0 * 1024.0)
-                );
-                let right_str = format!(
-                    "Speed: {:5.1} MB/s",
-                    speed_in / (1024.0 * 1024.0)
-                );
-                render_row(f, row_rects[1], Span::styled(left_str, style_cyan), Span::styled(right_str, style_cyan));
+                let left_line_1 = Line::from(vec![
+                    Span::styled("Ingested : ", style_purple),
+                    Span::styled(format!("{:7.2}", state.bytes_read as f64 / (1024.0 * 1024.0)), style_cyan),
+                    Span::styled(" MB", style_purple),
+                ]);
+                let right_line_1 = Line::from(vec![
+                    Span::styled("Speed: ", style_purple),
+                    Span::styled(format!("{:5.1}", speed_in / (1024.0 * 1024.0)), style_cyan),
+                    Span::styled(" MB/s", style_purple),
+                ]);
+                render_row(f, row_rects[1], left_line_1, right_line_1);
 
                 // Row 2: Output & Speed
-                let left_str_2 = format!(
-                    "Output   : {:7.2} MB ({:5.2}x Ratio)",
-                    state.bytes_written as f64 / (1024.0 * 1024.0),
-                    ratio
-                );
-                let right_str_2 = format!(
-                    "Speed: {:5.1} MB/s",
-                    speed_out / (1024.0 * 1024.0)
-                );
-                render_row(f, row_rects[2], Span::styled(left_str_2, style_cyan), Span::styled(right_str_2, style_cyan));
+                let left_line_2 = Line::from(vec![
+                    Span::styled("Output   : ", style_purple),
+                    Span::styled(format!("{:7.2}", state.bytes_written as f64 / (1024.0 * 1024.0)), style_cyan),
+                    Span::styled(" MB (", style_purple),
+                    Span::styled(format!("{:5.2}x", ratio), style_yellow),
+                    Span::styled(" Ratio)", style_purple),
+                ]);
+                let right_line_2 = Line::from(vec![
+                    Span::styled("Speed: ", style_purple),
+                    Span::styled(format!("{:5.1}", speed_out / (1024.0 * 1024.0)), style_cyan),
+                    Span::styled(" MB/s", style_purple),
+                ]);
+                render_row(f, row_rects[2], left_line_2, right_line_2);
 
                 // Row 3: Divider 1
                 f.render_widget(Paragraph::new(Line::from(Span::styled(
@@ -600,14 +623,14 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
                 render_row(
                     f,
                     row_rects[4],
-                    Span::styled("TRANSPORTER BUFFER CAPACITY", style_purple),
-                    Span::styled("INGEST SPEED HISTORY (35s)", style_purple)
+                    Line::from(Span::styled("TRANSPORTER BUFFER CAPACITY", style_purple)),
+                    Line::from(Span::styled("INGEST SPEED HISTORY (35s)", style_purple))
                 );
 
                 // Rows 5..10: Transporter Buffer & Projections & Speed History Chart
                 let chart_lines = render_history_chart(&state.speed_history, 6);
                 for r in 0..6 {
-                    let left_span = if r == 0 {
+                    let left_line = if r == 0 {
                         let cap = state.queue_capacity;
                         let depth = state.queue_depth;
                         let cap_f = if cap > 0 { cap } else { 1 };
@@ -617,24 +640,35 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
                             .take(filled)
                             .chain(std::iter::repeat('░').take(bar_len - filled))
                             .collect();
-                        Span::styled(format!(
-                            "Buffer: [{}] {:2}/{:2} blk",
-                            bar,
-                            depth,
-                            cap
-                        ), style_cyan)
+                        Line::from(vec![
+                            Span::styled("Buffer: ", style_purple),
+                            Span::styled(format!("[{}] ", bar), style_cyan),
+                            Span::styled(format!("{:2}/{:2} blk", depth, cap), style_yellow),
+                        ])
                     } else if r == 2 {
-                        Span::styled(format!("1m Ingest Target : {:8.1} MB", proj_1m / (1024.0 * 1024.0)), style_cyan)
+                        Line::from(vec![
+                            Span::styled("1m Ingest Target : ", style_purple),
+                            Span::styled(format!("{:8.1}", proj_1m / (1024.0 * 1024.0)), style_cyan),
+                            Span::styled(" MB", style_purple),
+                        ])
                     } else if r == 3 {
-                        Span::styled(format!("5m Ingest Target : {:8.1} MB", proj_5m / (1024.0 * 1024.0)), style_cyan)
+                        Line::from(vec![
+                            Span::styled("5m Ingest Target : ", style_purple),
+                            Span::styled(format!("{:8.1}", proj_5m / (1024.0 * 1024.0)), style_cyan),
+                            Span::styled(" MB", style_purple),
+                        ])
                     } else if r == 4 {
-                        Span::styled(format!("10m Ingest Target: {:8.1} MB", proj_10m / (1024.0 * 1024.0)), style_cyan)
+                        Line::from(vec![
+                            Span::styled("10m Ingest Target: ", style_purple),
+                            Span::styled(format!("{:8.1}", proj_10m / (1024.0 * 1024.0)), style_cyan),
+                            Span::styled(" MB", style_purple),
+                        ])
                     } else {
-                        Span::raw("")
+                        Line::from("")
                     };
 
-                    let right_span = Span::styled(chart_lines[r].clone(), style_yellow);
-                    render_row(f, row_rects[5 + r], left_span, right_span);
+                    let right_line = Line::from(Span::styled(chart_lines[r].clone(), style_yellow));
+                    render_row(f, row_rects[5 + r], left_line, right_line);
                 }
 
                 // Row 11: Divider 2
@@ -643,25 +677,37 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
                     style_orange
                 ))), row_rects[11]);
 
-                // Row 12: Controls 1
-                let control_left_1 = "CONTROLS: [P] Pause  [-] Slow Down";
-                let control_right_1 = format!("STATUS: THROTTLE: {:3}ms", throttle_delay);
-                render_row(
-                    f,
-                    row_rects[12],
-                    Span::styled(control_left_1, style_purple),
-                    Span::styled(control_right_1, style_purple)
-                );
+                // Row 12: Controls 1 (Styled Buttons & States)
+                let left_line_1 = Line::from(vec![
+                    Span::styled("CONTROLS: ", style_purple),
+                    Span::styled("[", style_purple),
+                    Span::styled("P", Style::default().fg(Color::Black).bg(Color::Indexed(147)).add_modifier(Modifier::BOLD)),
+                    Span::styled("] Pause  ", style_purple),
+                    Span::styled("[", style_purple),
+                    Span::styled("-", Style::default().fg(Color::Black).bg(Color::Indexed(147)).add_modifier(Modifier::BOLD)),
+                    Span::styled("] Slow Down", style_purple),
+                ]);
+                let right_line_1 = Line::from(vec![
+                    Span::styled("STATUS: THROTTLE: ", style_purple),
+                    Span::styled(format!("{:3}ms", throttle_delay), style_yellow),
+                ]);
+                render_row(f, row_rects[12], left_line_1, right_line_1);
 
                 // Row 13: Controls 2
-                let control_left_2 = "          [+] Speed Up  [Q] Abort";
-                let control_right_2 = format!("        STATE   : {:7}", pause_status);
-                render_row(
-                    f,
-                    row_rects[13],
-                    Span::styled(control_left_2, style_orange),
-                    Span::styled(control_right_2, style_orange)
-                );
+                let left_line_2 = Line::from(vec![
+                    Span::styled("          ", style_purple),
+                    Span::styled("[", style_purple),
+                    Span::styled("+", Style::default().fg(Color::Black).bg(Color::Indexed(147)).add_modifier(Modifier::BOLD)),
+                    Span::styled("] Speed Up  ", style_purple),
+                    Span::styled("[", style_purple),
+                    Span::styled("Q", Style::default().fg(Color::White).bg(Color::Red).add_modifier(Modifier::BOLD)),
+                    Span::styled("] Abort", style_purple),
+                ]);
+                let right_line_2 = Line::from(vec![
+                    Span::styled("        STATE   : ", style_purple),
+                    Span::styled(format!("{:7}", pause_status), if pause_status.trim() == "PAUSED" { Style::default().fg(Color::Red).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::Green).add_modifier(Modifier::BOLD) }),
+                ]);
+                render_row(f, row_rects[13], left_line_2, right_line_2);
 
                 // Row 14: Bottom border
                 f.render_widget(Paragraph::new(Line::from(Span::styled(
