@@ -213,6 +213,14 @@ pub fn run_tui_on_main_thread(
                                 let new_val = current.saturating_sub(50);
                                 crate::THROTTLE_DELAY_MS.store(new_val, Ordering::Relaxed);
                             }
+                            KeyCode::Up => {
+                                let offset = crate::LOG_SCROLL_OFFSET.load(Ordering::Relaxed);
+                                crate::LOG_SCROLL_OFFSET.store(offset.saturating_sub(1), Ordering::Relaxed);
+                            }
+                            KeyCode::Down => {
+                                let offset = crate::LOG_SCROLL_OFFSET.load(Ordering::Relaxed);
+                                crate::LOG_SCROLL_OFFSET.store(offset + 1, Ordering::Relaxed);
+                            }
                             _ => {}
                         }
                     }
@@ -272,49 +280,82 @@ pub fn run_tui_on_main_thread(
 
 fn render_history_chart(history: &[f64], height: usize) -> Vec<String> {
     let mut chart_lines = vec![String::new(); height];
-    if history.is_empty() {
-        for line in chart_lines.iter_mut() {
-            *line = " ".repeat(35);
-        }
-        return chart_lines;
-    }
-
     let max_val = history.iter().copied().fold(0.0, f64::max);
     let scale = if max_val > 0.0 { max_val } else { 1.0 };
 
+    let (top_label, bot_label) = if max_val >= 1024.0 * 1024.0 * 1024.0 {
+        (
+            format!("{:4.1}G ┼", max_val / (1024.0 * 1024.0 * 1024.0)),
+            "0.0G ┼".to_string(),
+        )
+    } else if max_val >= 1024.0 * 1024.0 {
+        (
+            format!("{:4.1}M ┼", max_val / (1024.0 * 1024.0)),
+            "0.0M ┼".to_string(),
+        )
+    } else if max_val >= 1024.0 {
+        (
+            format!("{:4.1}K ┼", max_val / 1024.0),
+            "0.0K ┼".to_string(),
+        )
+    } else {
+        (
+            format!("{:4.0}B ┼", max_val),
+            "  0B ┼".to_string(),
+        )
+    };
+    let mid_label = "     │".to_string();
+
     for r in 0..height {
+        let label = if r == 0 {
+            &top_label
+        } else if r == height - 1 {
+            &bot_label
+        } else {
+            &mid_label
+        };
+
         let mut row_str = String::new();
-        let padding = 35usize.saturating_sub(history.len());
+        row_str.push_str(label);
+
+        let data_width = 27usize;
+        let padding = data_width.saturating_sub(history.len());
         row_str.push_str(&" ".repeat(padding));
 
-        for &val in history {
-            let pct = val / scale;
-            let val_height = pct * height as f64;
-            let threshold = r as f64;
-            
-            let diff = val_height - threshold;
-            let ch = if diff >= 1.0 {
-                '█'
-            } else if diff >= 0.875 {
-                '█'
-            } else if diff >= 0.75 {
-                '▇'
-            } else if diff >= 0.625 {
-                '▆'
-            } else if diff >= 0.5 {
-                '▅'
-            } else if diff >= 0.375 {
-                '▄'
-            } else if diff >= 0.25 {
-                '▃'
-            } else if diff >= 0.125 {
-                '▂'
-            } else {
-                ' '
-            };
-            row_str.push(ch);
+        let start_idx = history.len().saturating_sub(data_width);
+        if !history.is_empty() {
+            for &val in &history[start_idx..] {
+                let pct = val / scale;
+                let val_height = pct * height as f64;
+                let threshold = (height - 1 - r) as f64;
+                
+                let diff = val_height - threshold;
+                let ch = if diff >= 1.0 {
+                    '█'
+                } else if diff >= 0.875 {
+                    '█'
+                } else if diff >= 0.75 {
+                    '▇'
+                } else if diff >= 0.625 {
+                    '▆'
+                } else if diff >= 0.5 {
+                    '▅'
+                } else if diff >= 0.375 {
+                    '▄'
+                } else if diff >= 0.25 {
+                    '▃'
+                } else if diff >= 0.125 {
+                    '▂'
+                } else {
+                    ' '
+                };
+                row_str.push(ch);
+            }
+        } else {
+            row_str.push_str(&" ".repeat(data_width));
         }
-        chart_lines[height - 1 - r] = row_str;
+
+        chart_lines[r] = row_str;
     }
     chart_lines
 }
@@ -350,11 +391,11 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
         // Clear the screen to remove previous terminal remnants
         f.render_widget(Clear, area);
 
-        if cols < 80 || rows < 15 {
+        if cols < 80 || rows < 22 {
             let warning_lines = vec![
                 Line::from(Span::styled("Terminal size too small.", Style::default().fg(Color::Red))),
                 Line::from(Span::styled(format!("Current: {}x{}", cols, rows), Style::default().fg(Color::Red))),
-                Line::from(Span::styled("Please resize to at least 80x15.", Style::default().fg(Color::Yellow))),
+                Line::from(Span::styled("Please resize to at least 80x22.", Style::default().fg(Color::Yellow))),
             ];
             let paragraph = Paragraph::new(warning_lines);
             f.render_widget(paragraph, area);
@@ -362,19 +403,19 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
         }
 
         let pad_left = (cols as usize).saturating_sub(80) / 2;
-        let pad_top = (rows as usize).saturating_sub(15) / 2;
+        let pad_top = (rows as usize).saturating_sub(22) / 2;
 
         let rect = Rect::new(
             pad_left as u16,
             pad_top as u16,
             80,
-            15,
+            22,
         );
 
-        // Split into 15 individual rows
+        // Split into 22 individual rows
         let row_rects = Layout::default()
             .direction(Direction::Vertical)
-            .constraints(vec![Constraint::Length(1); 15])
+            .constraints(vec![Constraint::Length(1); 22])
             .split(rect);
 
         // Row helper for 3-column layout (left border, left content, mid divider, right content, right border)
@@ -524,44 +565,6 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
                     "├────────────────────────────────────────┼─────────────────────────────────────┤",
                     style_orange
                 ))), row_rects[11]);
-
-                // Row 12: Controls 1 (Styled Buttons & States)
-                let left_line_1 = Line::from(vec![
-                    Span::styled("CONTROLS: ", style_purple),
-                    Span::styled("[", style_purple),
-                    Span::styled("P", Style::default().fg(Color::Black).bg(Color::Indexed(147)).add_modifier(Modifier::BOLD)),
-                    Span::styled("] Pause  ", style_purple),
-                    Span::styled("[", style_purple),
-                    Span::styled("-", Style::default().fg(Color::Black).bg(Color::Indexed(147)).add_modifier(Modifier::BOLD)),
-                    Span::styled("] Slow Down", style_purple),
-                ]);
-                let right_line_1 = Line::from(vec![
-                    Span::styled("STATUS: THROTTLE: ", style_purple),
-                    Span::styled(format!("{:3}ms", throttle_delay), style_yellow),
-                ]);
-                render_row(f, row_rects[12], left_line_1, right_line_1);
-
-                // Row 13: Controls 2
-                let left_line_2 = Line::from(vec![
-                    Span::styled("          ", style_purple),
-                    Span::styled("[", style_purple),
-                    Span::styled("+", Style::default().fg(Color::Black).bg(Color::Indexed(147)).add_modifier(Modifier::BOLD)),
-                    Span::styled("] Speed Up  ", style_purple),
-                    Span::styled("[", style_purple),
-                    Span::styled("Q", Style::default().fg(Color::White).bg(Color::Red).add_modifier(Modifier::BOLD)),
-                    Span::styled("] Abort", style_purple),
-                ]);
-                let right_line_2 = Line::from(vec![
-                    Span::styled("        STATE   : ", style_purple),
-                    Span::styled(format!("{:7}", pause_status), if pause_status.trim() == "PAUSED" { Style::default().fg(Color::Red).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::Green).add_modifier(Modifier::BOLD) }),
-                ]);
-                render_row(f, row_rects[13], left_line_2, right_line_2);
-
-                // Row 14: Bottom border
-                f.render_widget(Paragraph::new(Line::from(Span::styled(
-                    "╰────────────────────────────────────────┴─────────────────────────────────────╯",
-                    style_orange
-                ))), row_rects[14]);
             }
             TuiMode::Stream => {
                 let speed_in = if elapsed > 0.0 {
@@ -676,46 +679,101 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
                     "├────────────────────────────────────────┼─────────────────────────────────────┤",
                     style_orange
                 ))), row_rects[11]);
-
-                // Row 12: Controls 1 (Styled Buttons & States)
-                let left_line_1 = Line::from(vec![
-                    Span::styled("CONTROLS: ", style_purple),
-                    Span::styled("[", style_purple),
-                    Span::styled("P", Style::default().fg(Color::Black).bg(Color::Indexed(147)).add_modifier(Modifier::BOLD)),
-                    Span::styled("] Pause  ", style_purple),
-                    Span::styled("[", style_purple),
-                    Span::styled("-", Style::default().fg(Color::Black).bg(Color::Indexed(147)).add_modifier(Modifier::BOLD)),
-                    Span::styled("] Slow Down", style_purple),
-                ]);
-                let right_line_1 = Line::from(vec![
-                    Span::styled("STATUS: THROTTLE: ", style_purple),
-                    Span::styled(format!("{:3}ms", throttle_delay), style_yellow),
-                ]);
-                render_row(f, row_rects[12], left_line_1, right_line_1);
-
-                // Row 13: Controls 2
-                let left_line_2 = Line::from(vec![
-                    Span::styled("          ", style_purple),
-                    Span::styled("[", style_purple),
-                    Span::styled("+", Style::default().fg(Color::Black).bg(Color::Indexed(147)).add_modifier(Modifier::BOLD)),
-                    Span::styled("] Speed Up  ", style_purple),
-                    Span::styled("[", style_purple),
-                    Span::styled("Q", Style::default().fg(Color::White).bg(Color::Red).add_modifier(Modifier::BOLD)),
-                    Span::styled("] Abort", style_purple),
-                ]);
-                let right_line_2 = Line::from(vec![
-                    Span::styled("        STATE   : ", style_purple),
-                    Span::styled(format!("{:7}", pause_status), if pause_status.trim() == "PAUSED" { Style::default().fg(Color::Red).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::Green).add_modifier(Modifier::BOLD) }),
-                ]);
-                render_row(f, row_rects[13], left_line_2, right_line_2);
-
-                // Row 14: Bottom border
-                f.render_widget(Paragraph::new(Line::from(Span::styled(
-                    "╰────────────────────────────────────────┴─────────────────────────────────────╯",
-                    style_orange
-                ))), row_rects[14]);
             }
         }
+
+        // Row 12: Logs Header Panel
+        let log_header_left = Line::from(vec![
+            Span::styled("SYSTEM LOG MESSAGES (SCROLL: ", style_purple),
+            Span::styled("▲", Style::default().fg(Color::Black).bg(Color::Indexed(147)).add_modifier(Modifier::BOLD)),
+            Span::styled("/", style_purple),
+            Span::styled("▼", Style::default().fg(Color::Black).bg(Color::Indexed(147)).add_modifier(Modifier::BOLD)),
+            Span::styled(")", style_purple),
+        ]);
+        render_row(f, row_rects[12], log_header_left, Line::from(""));
+
+        // Rows 13..17: 5 Scrollable Log Content Rows (full-width spanning)
+        let logs = if let Ok(buffer) = crate::get_log_buffer().lock() {
+            buffer.clone()
+        } else {
+            Vec::new()
+        };
+
+        let scroll_offset = crate::LOG_SCROLL_OFFSET.load(Ordering::Relaxed);
+        let max_offset = logs.len().saturating_sub(5);
+        let offset = std::cmp::min(scroll_offset, max_offset);
+        crate::LOG_SCROLL_OFFSET.store(offset, Ordering::Relaxed); // Cap/sync offset state
+
+        for r in 0..5 {
+            let cols = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Length(2),  // "│ "
+                    Constraint::Length(76), // Full-width log content area
+                    Constraint::Length(2),  // " │"
+                ])
+                .split(row_rects[13 + r]);
+
+            f.render_widget(Paragraph::new(Line::from(Span::styled("│ ", style_orange))), cols[0]);
+            
+            if offset + r < logs.len() {
+                let line_str = &logs[offset + r];
+                let truncated_line = if line_str.len() > 76 {
+                    format!("{}...", &line_str[..73])
+                } else {
+                    line_str.clone()
+                };
+                f.render_widget(Paragraph::new(Line::from(Span::styled(truncated_line, style_cyan))), cols[1]);
+            } else {
+                f.render_widget(Paragraph::new(Line::from("")), cols[1]);
+            }
+
+            f.render_widget(Paragraph::new(Line::from(Span::styled(" │", style_orange))), cols[2]);
+        }
+
+        // Row 18: Divider 3 (Log panel border)
+        f.render_widget(Paragraph::new(Line::from(Span::styled(
+            "├──────────────────────────────────────────────────────────────────────────────┤",
+            style_orange
+        ))), row_rects[18]);
+
+        // Row 19: Controls 1 (Styled Buttons & States)
+        let left_line_1 = Line::from(vec![
+            Span::styled("CONTROLS: ", style_purple),
+            Span::styled("[", style_purple),
+            Span::styled("P", Style::default().fg(Color::Black).bg(Color::Indexed(147)).add_modifier(Modifier::BOLD)),
+            Span::styled("] Pause  ", style_purple),
+            Span::styled("[", style_purple),
+            Span::styled("-", Style::default().fg(Color::Black).bg(Color::Indexed(147)).add_modifier(Modifier::BOLD)),
+            Span::styled("] Slow Down", style_purple),
+        ]);
+        let right_line_1 = Line::from(vec![
+            Span::styled("STATUS: THROTTLE: ", style_purple),
+            Span::styled(format!("{:3}ms", throttle_delay), style_yellow),
+        ]);
+        render_row(f, row_rects[19], left_line_1, right_line_1);
+
+        // Row 20: Controls 2
+        let left_line_2 = Line::from(vec![
+            Span::styled("          ", style_purple),
+            Span::styled("[", style_purple),
+            Span::styled("+", Style::default().fg(Color::Black).bg(Color::Indexed(147)).add_modifier(Modifier::BOLD)),
+            Span::styled("] Speed Up  ", style_purple),
+            Span::styled("[", style_purple),
+            Span::styled("Q", Style::default().fg(Color::White).bg(Color::Red).add_modifier(Modifier::BOLD)),
+            Span::styled("] Abort", style_purple),
+        ]);
+        let right_line_2 = Line::from(vec![
+            Span::styled("        STATE   : ", style_purple),
+            Span::styled(format!("{:7}", pause_status), if pause_status.trim() == "PAUSED" { Style::default().fg(Color::Red).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::Green).add_modifier(Modifier::BOLD) }),
+        ]);
+        render_row(f, row_rects[20], left_line_2, right_line_2);
+
+        // Row 21: Bottom border
+        f.render_widget(Paragraph::new(Line::from(Span::styled(
+            "╰────────────────────────────────────────┴─────────────────────────────────────╯",
+            style_orange
+        ))), row_rects[21]);
     })?;
 
     Ok(())
@@ -764,7 +822,7 @@ mod tests {
 
         state.speed_history = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
 
-        let backend = TestBackend::new(80, 15);
+        let backend = TestBackend::new(80, 22);
         let mut terminal = Terminal::new(backend).unwrap();
         draw_tui(&mut terminal, &state).unwrap();
         let clean_output = get_buffer_string(terminal.backend());
@@ -781,7 +839,7 @@ mod tests {
 
         state.speed_history = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
 
-        let backend = TestBackend::new(80, 15);
+        let backend = TestBackend::new(80, 22);
         let mut terminal = Terminal::new(backend).unwrap();
         draw_tui(&mut terminal, &state).unwrap();
         let clean_output = get_buffer_string(terminal.backend());
@@ -796,7 +854,7 @@ mod tests {
         state.stripes[0].bytes_processed = 120000; // 120%
         state.stripes[0].bytes_written = 40000;
 
-        let backend = TestBackend::new(80, 15);
+        let backend = TestBackend::new(80, 22);
         let mut terminal = Terminal::new(backend).unwrap();
         draw_tui(&mut terminal, &state).unwrap();
         let clean_output = get_buffer_string(terminal.backend());
@@ -808,7 +866,7 @@ mod tests {
         let mut state = TuiState::new_stream(8, 0);
         state.queue_depth = 12; // Exceeds cap (8)
 
-        let backend = TestBackend::new(80, 15);
+        let backend = TestBackend::new(80, 22);
         let mut terminal = Terminal::new(backend).unwrap();
         draw_tui(&mut terminal, &state).unwrap();
         let clean_output = get_buffer_string(terminal.backend());
@@ -843,14 +901,14 @@ mod tests {
         draw_tui(&mut terminal, &state).unwrap();
         
         let buffer = terminal.backend().buffer();
-        let mut row_5_str = String::new();
+        let mut row_2_str = String::new();
         for x in 0..80 {
-            row_5_str.push_str(buffer.get(x, 4).symbol());
+            row_2_str.push_str(buffer.get(x, 1).symbol());
         }
         assert!(
-            row_5_str.contains("┌───"),
-            "Row 5 (0-indexed 4) must contain the top border ┌───, got: {:?}",
-            row_5_str
+            row_2_str.contains("┌───"),
+            "Row 2 (0-indexed 1) must contain the top border ┌───, got: {:?}",
+            row_2_str
         );
     }
 
@@ -865,14 +923,14 @@ mod tests {
         draw_tui(&mut terminal, &state).unwrap();
 
         let buffer = terminal.backend().buffer();
-        let mut row_13_str = String::new();
+        let mut row_10_str = String::new();
         for x in 0..120 {
-            row_13_str.push_str(buffer.get(x, 12).symbol());
+            row_10_str.push_str(buffer.get(x, 9).symbol());
         }
         assert!(
-            row_13_str[20..].starts_with("┌───"),
-            "Row 13 (0-indexed 12) starting at col 20 must contain the top border ┌───, got: {:?}",
-            row_13_str
+            row_10_str[20..].starts_with("┌───"),
+            "Row 10 (0-indexed 9) starting at col 20 must contain the top border ┌───, got: {:?}",
+            row_10_str
         );
     }
 
@@ -882,7 +940,7 @@ mod tests {
         {
             let mut state = TuiState::new_split(4, 400 * 1024);
             state.speed_history = vec![1.0, 2.0, 3.0];
-            let backend = TestBackend::new(80, 15);
+            let backend = TestBackend::new(80, 22);
             let mut terminal = Terminal::new(backend).unwrap();
             draw_tui(&mut terminal, &state).unwrap();
             let clean_output = get_buffer_string(terminal.backend());
@@ -904,7 +962,7 @@ mod tests {
         {
             let mut state = TuiState::new_stream(8, 0);
             state.speed_history = vec![1.0, 2.0, 3.0];
-            let backend = TestBackend::new(80, 15);
+            let backend = TestBackend::new(80, 22);
             let mut terminal = Terminal::new(backend).unwrap();
             draw_tui(&mut terminal, &state).unwrap();
             let clean_output = get_buffer_string(terminal.backend());

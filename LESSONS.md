@@ -88,3 +88,24 @@ This document indexes critical lessons learned during the development, compilati
 - **The Solution:** If you break it, break it all the way. Align all files, test pipelines, environments, and documentations to the new architecture. Do not leave "dangling" legacy configurations or partial transitions.
 - **The Rule:** A breaking change must be executed atomically across the entire codebase—including tests, scripts, and documentations.
 
+---
+
+## 9. Lesson: Dynamic Btop-like Unit Scaling for TUI Graph Ticks
+- **Date:** 2026-07-15
+- > **Tags:** #TUI #Design #Aesthetics #DynamicScaling
+- **Context:** Initial iterations of the speed history graph formatted y-axis values exclusively as MB/s, resulting in confusing labels (e.g. `0.0M`) when speed ranges fell into lower bounds.
+- **The Issue:** Displaying static units on y-axis boundaries reduces clarity when data varies across multiple magnitudes (e.g. bytes, kilobytes, megabytes, gigabytes).
+- **The Solution:** Implement dynamic, magnitude-based scaling where graph boundaries dynamically format units (e.g. `B` for bytes, `K` for kilobytes, `M` for megabytes, `G` for gigabytes) based on the current peak value.
+- **The Rule:** Graphs and charts displaying variable physical units must dynamically adapt labels to match the current order of magnitude of the dataset.
+
+---
+
+## 10. Lesson: In-Memory TUI Log Buffers for Piped Stream Execution
+- **Date:** 2026-07-15
+- > **Tags:** #TUI #Logging #EventLoop
+- **Context:** Adding stdout/stderr logs inside the TUI required intercepting outputs which would otherwise corrupt alternate terminal screens.
+- **The Issue:** Standard output or error writes directly inside raw TUI alternate screens cause drawing artifacts and screen garbage.
+- **The Solution:** Establish an in-memory, thread-safe global log queue (`OnceLock<Arc<Mutex<Vec<String>>>>`). Intercept internal verbose statements (`log_verbose!`) to populate this buffer when `TUI_ACTIVE` is enabled, and render the buffer as a scrollable paragraph in the layout.
+- **The Rule:** Capturing logs in a full-screen TUI requires storing log rows inside thread-safe memory and rendering them via custom scroll-offset bounds.
+
+

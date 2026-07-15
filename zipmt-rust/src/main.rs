@@ -18,18 +18,32 @@ use compressor::{Compressor, GzipCompressor, Bzip2Compressor, XzCompressor, ZipE
 // Yes! A standard std::sync::OnceLock is available in Rust 1.70+ and completely standard!
 // OnceLock is perfect and doesn't require any external crate!
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering, AtomicU64};
+use std::sync::atomic::{AtomicBool, Ordering, AtomicU64, AtomicUsize};
 
 pub static VERBOSE: AtomicBool = AtomicBool::new(false);
 pub static TUI_ACTIVE: AtomicBool = AtomicBool::new(false);
 pub static THROTTLE_DELAY_MS: AtomicU64 = AtomicU64::new(0);
 pub static IS_PAUSED: AtomicBool = AtomicBool::new(false);
+pub static LOG_SCROLL_OFFSET: AtomicUsize = AtomicUsize::new(0);
+
+pub fn get_log_buffer() -> &'static Arc<Mutex<Vec<String>>> {
+    static LOG_BUFFER: OnceLock<Arc<Mutex<Vec<String>>>> = OnceLock::new();
+    LOG_BUFFER.get_or_init(|| Arc::new(Mutex::new(Vec::new())))
+}
 
 #[macro_export]
 macro_rules! log_verbose {
     ($($arg:tt)*) => {
-        if $crate::VERBOSE.load(std::sync::atomic::Ordering::Relaxed) && !$crate::TUI_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
-            eprintln!("[INFO] {}", format!($($arg)*));
+        let msg = format!($($arg)*);
+        if $crate::TUI_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
+            if let Ok(mut buffer) = $crate::get_log_buffer().lock() {
+                buffer.push(msg.clone());
+                if buffer.len() > 100 {
+                    buffer.remove(0);
+                }
+            }
+        } else if $crate::VERBOSE.load(std::sync::atomic::Ordering::Relaxed) {
+            eprintln!("[INFO] {}", msg);
         }
     };
 }
