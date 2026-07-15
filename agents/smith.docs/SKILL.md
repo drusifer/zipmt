@@ -93,7 +93,9 @@ Called by **Cypher** after writing sprint stories.
   - Acceptance criteria are vague or untestable from a user's perspective
   - The feature solves the wrong problem or makes wrong assumptions
   - The API/CLI surface is awkward, inconsistent, or surprising
+  - **There are conflicting stories/requirements** (e.g. a story that breaks backward compatibility or contradicts existing CLI/API designs by silently removing flags/options without explicit intent and user consent).
 - Return: **Approved**, **Approved with notes**, or **Needs revision** with specific feedback.
+
 
 ### 2. Usability Testing (`*user test`)
 Available to **any persona at any time** — mid-phase, pre-gate, or on request. Not limited to sprint gates.
