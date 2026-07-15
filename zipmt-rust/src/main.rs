@@ -84,7 +84,12 @@ struct Args {
     /// Verbose output / metrics.
     #[arg(short, long)]
     verbose: bool,
+
+    /// Display terminal progress UI.
+    #[arg(short = 'T', long, default_value_t = false)]
+    tui: bool,
 }
+
 
 fn main() {
     if std::env::var("TEST_QUERY_SIZE").is_ok() {
@@ -262,20 +267,18 @@ fn run_app(args: Args, compressor: Arc<Box<dyn Compressor + Send + Sync>>) -> Re
         return Ok(());
     }
 
-    // Determine if TUI mode should run by default based on fallback checks
+    // Determine if TUI mode should run based on fallback checks and args.tui flag
     let force_tui = std::env::var("ZIPMT_FORCE_TUI").is_ok();
     let is_stdout_terminal = std::io::stdout().is_terminal();
-    let is_stdin_terminal = std::io::stdin().is_terminal();
     let is_stderr_terminal = std::io::stderr().is_terminal();
 
     let writing_to_stdout = args.stdout || (is_stdin && args.output.is_none());
 
-    let run_tui = force_tui || (
-        !writing_to_stdout
-        && is_stdout_terminal
-        && is_stdin_terminal
-        && is_stderr_terminal
+    let run_tui = args.tui || force_tui || (
+        is_stderr_terminal
+        && !(writing_to_stdout && is_stdout_terminal)
     );
+
 
     // Initialize TuiState if TUI mode is active
     let tui_state = if run_tui {

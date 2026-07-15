@@ -644,14 +644,25 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
         let cols = area.width;
         let rows = area.height;
 
+        if cols < 80 || rows < 15 {
+            let warning_lines = vec![
+                Line::from(Span::styled("Terminal size too small.", Style::default().fg(Color::Red))),
+                Line::from(Span::styled(format!("Current: {}x{}", cols, rows), Style::default().fg(Color::Red))),
+                Line::from(Span::styled("Please resize to at least 80x15.", Style::default().fg(Color::Yellow))),
+            ];
+            let paragraph = Paragraph::new(warning_lines);
+            f.render_widget(paragraph, area);
+            return;
+        }
+
         let pad_left = (cols as usize).saturating_sub(80) / 2;
-        let pad_top = (rows as usize).saturating_sub(16) / 2;
+        let pad_top = (rows as usize).saturating_sub(15) / 2;
 
         let rect = Rect::new(
             pad_left as u16,
             pad_top as u16,
-            std::cmp::min(80, cols),
-            std::cmp::min(15, rows),
+            80,
+            15,
         );
 
         let paragraph = Paragraph::new(lines);
@@ -659,6 +670,7 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
     })?;
 
     Ok(())
+
 }
 
 #[cfg(test)]
