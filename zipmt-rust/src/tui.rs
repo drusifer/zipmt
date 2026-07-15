@@ -9,8 +9,8 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui::layout::Rect;
-use ratatui::widgets::Paragraph;
+use ratatui::layout::{Rect, Layout, Constraint, Direction};
+use ratatui::widgets::{Paragraph, Clear};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TuiMode {
@@ -342,307 +342,13 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
     };
     let throttle_delay = crate::THROTTLE_DELAY_MS.load(Ordering::Relaxed);
 
-    let mut lines: Vec<Line> = Vec::new();
-
-    // Top border
-    lines.push(Line::from(vec![
-        Span::styled("┌─── LCARS COMMAND PANEL ─ [ SYSTEM: ACTIVE ] ─────────────────────────────────┐", style_orange)
-    ]));
-
-    match state.mode {
-        TuiMode::Split => {
-            let mut total_in = 0;
-            let mut total_out = 0;
-
-            for stripe in &state.stripes {
-                total_in += stripe.bytes_processed;
-                total_out += stripe.bytes_written;
-            }
-
-            let speed = if elapsed > 0.0 {
-                total_in as f64 / elapsed
-            } else {
-                0.0
-            };
-
-            let eta_str = if total_in == 0 {
-                "Estimating...".to_string()
-            } else if total_in >= state.total_input_size {
-                "0s (Complete)".to_string()
-            } else if speed > 0.0 {
-                let remaining = state.total_input_size.saturating_sub(total_in);
-                let eta_secs = (remaining as f64 / speed).round() as usize;
-                format!("{}s", eta_secs)
-            } else {
-                "--".to_string()
-            };
-
-            let ratio = if total_out > 0 {
-                total_in as f64 / total_out as f64
-            } else {
-                1.0
-            };
-
-            let left_str = format!(
-                "Ingested : {:7.2} MB / {:7.2} MB    ",
-                total_in as f64 / (1024.0 * 1024.0),
-                state.total_input_size as f64 / (1024.0 * 1024.0)
-            );
-            let right_str = format!(
-                "Speed: {:5.1} MB/s                  ",
-                speed / (1024.0 * 1024.0)
-            );
-            lines.push(Line::from(vec![
-                Span::styled("│ ", style_orange),
-                Span::styled(left_str, style_cyan),
-                Span::styled(" │ ", style_orange),
-                Span::styled(right_str, style_cyan),
-                Span::styled(" │", style_orange),
-            ]));
-
-            let left_str_2 = format!(
-                "Output   : {:7.2} MB ({:5.2}x Ratio)  ",
-                total_out as f64 / (1024.0 * 1024.0),
-                ratio
-            );
-            let right_str_2 = format!(
-                "Time : {:5.1}s (ETA: {:<13}) ",
-                elapsed,
-                eta_str
-            );
-            lines.push(Line::from(vec![
-                Span::styled("│ ", style_orange),
-                Span::styled(left_str_2, style_cyan),
-                Span::styled(" │ ", style_orange),
-                Span::styled(right_str_2, style_cyan),
-                Span::styled(" │", style_orange),
-            ]));
-
-            lines.push(Line::from(vec![
-                Span::styled("├───────────────────────────────────────┬──────────────────────────────────────┤", style_orange)
-            ]));
-
-            let left_header = "STRIPE SECTORS PROGRESS               ";
-            let right_header = "INGEST SPEED HISTORY (35s)         ";
-            lines.push(Line::from(vec![
-                Span::styled("│ ", style_orange),
-                Span::styled(left_header, style_purple),
-                Span::styled(" │ ", style_orange),
-                Span::styled(right_header, style_purple),
-                Span::styled(" │", style_orange),
-            ]));
-
-            let chart_lines = render_history_chart(&state.speed_history, 6);
-            for r in 0..6 {
-                let left_str = if r < state.stripes.len() {
-                    let stripe = &state.stripes[r];
-                    let pct = if stripe.total_bytes > 0 {
-                        (stripe.bytes_processed as f64 / stripe.total_bytes as f64) * 100.0
-                    } else {
-                        0.0
-                    };
-                    let bar_len = 15;
-                    let filled = std::cmp::min(((pct / 100.0) * bar_len as f64) as usize, bar_len);
-                    let bar: String = std::iter::repeat('█')
-                        .take(filled)
-                        .chain(std::iter::repeat('░').take(bar_len - filled))
-                        .collect();
-                    let stripe_ratio = if stripe.bytes_written > 0 {
-                        stripe.bytes_processed as f64 / stripe.bytes_written as f64
-                    } else {
-                        1.0
-                    };
-                    format!(
-                        "Sec {:02}: [{}] {:3.0}% ({:4.1}x)",
-                        stripe.id,
-                        bar,
-                        pct,
-                        stripe_ratio
-                    )
-                } else {
-                    " ".repeat(38)
-                };
-
-                let right_str = &chart_lines[r];
-
-                lines.push(Line::from(vec![
-                    Span::styled("│ ", style_orange),
-                    Span::styled(left_str, style_cyan),
-                    Span::styled(" │ ", style_orange),
-                    Span::styled(right_str.clone(), style_yellow),
-                    Span::styled(" │", style_orange),
-                ]));
-            }
-
-            lines.push(Line::from(vec![
-                Span::styled("├───────────────────────────────────────┼──────────────────────────────────────┤", style_orange)
-            ]));
-            
-            let control_left_1 = "CONTROLS: [P] Pause  [-] Slow Down    ";
-            let control_right_1 = format!("STATUS: THROTTLE: {:3}ms            ", throttle_delay);
-            lines.push(Line::from(vec![
-                Span::styled("│ ", style_orange),
-                Span::styled(control_left_1, style_purple),
-                Span::styled(" │ ", style_orange),
-                Span::styled(control_right_1, style_purple),
-                Span::styled(" │", style_orange),
-            ]));
-
-            let control_left_2 = "          [+] Speed Up  [Q] Abort     ";
-            let control_right_2 = format!("        STATE   : {:7}          ", pause_status);
-            lines.push(Line::from(vec![
-                Span::styled("│ ", style_orange),
-                Span::styled(control_left_2, style_orange),
-                Span::styled(" │ ", style_orange),
-                Span::styled(control_right_2, style_orange),
-                Span::styled(" │", style_orange),
-            ]));
-
-            lines.push(Line::from(vec![
-                Span::styled("╰───────────────────────────────────────┴──────────────────────────────────────╯", style_orange)
-            ]));
-        }
-        TuiMode::Stream => {
-            let speed_in = if elapsed > 0.0 {
-                state.bytes_read as f64 / elapsed
-            } else {
-                0.0
-            };
-            let speed_out = if elapsed > 0.0 {
-                state.bytes_written as f64 / elapsed
-            } else {
-                0.0
-            };
-
-            let ratio = if state.bytes_written > 0 {
-                state.bytes_read as f64 / state.bytes_written as f64
-            } else {
-                1.0
-            };
-
-            let proj_1m = speed_in * 60.0;
-            let proj_5m = speed_in * 300.0;
-            let proj_10m = speed_in * 600.0;
-
-            let left_str = format!(
-                "Ingested : {:7.2} MB                 ",
-                state.bytes_read as f64 / (1024.0 * 1024.0)
-            );
-            let right_str = format!(
-                "Speed: {:5.1} MB/s                  ",
-                speed_in / (1024.0 * 1024.0)
-            );
-            lines.push(Line::from(vec![
-                Span::styled("│ ", style_orange),
-                Span::styled(left_str, style_cyan),
-                Span::styled(" │ ", style_orange),
-                Span::styled(right_str, style_cyan),
-                Span::styled(" │", style_orange),
-            ]));
-
-            let left_str_2 = format!(
-                "Output   : {:7.2} MB ({:5.2}x Ratio)  ",
-                state.bytes_written as f64 / (1024.0 * 1024.0),
-                ratio
-            );
-            let right_str_2 = format!(
-                "Speed: {:5.1} MB/s                  ",
-                speed_out / (1024.0 * 1024.0)
-            );
-            lines.push(Line::from(vec![
-                Span::styled("│ ", style_orange),
-                Span::styled(left_str_2, style_cyan),
-                Span::styled(" │ ", style_orange),
-                Span::styled(right_str_2, style_cyan),
-                Span::styled(" │", style_orange),
-            ]));
-
-            lines.push(Line::from(vec![
-                Span::styled("├───────────────────────────────────────┬──────────────────────────────────────┤", style_orange)
-            ]));
-            let left_header = "TRANSPORTER BUFFER CAPACITY           ";
-            let right_header = "INGEST SPEED HISTORY (35s)         ";
-            lines.push(Line::from(vec![
-                Span::styled("│ ", style_orange),
-                Span::styled(left_header, style_purple),
-                Span::styled(" │ ", style_orange),
-                Span::styled(right_header, style_purple),
-                Span::styled(" │", style_orange),
-            ]));
-
-            let chart_lines = render_history_chart(&state.speed_history, 6);
-            for r in 0..6 {
-                let left_str = if r == 0 {
-                    let cap = state.queue_capacity;
-                    let depth = state.queue_depth;
-                    let cap_f = if cap > 0 { cap } else { 1 };
-                    let bar_len = 15;
-                    let filled = std::cmp::min((depth * bar_len) / cap_f, bar_len);
-                    let bar: String = std::iter::repeat('█')
-                        .take(filled)
-                        .chain(std::iter::repeat('░').take(bar_len - filled))
-                        .collect();
-                    format!(
-                        "Buffer: [{}] {:2}/{:2} blk   ",
-                        bar,
-                        depth,
-                        cap
-                    )
-                } else if r == 2 {
-                    format!("1m Ingest Target : {:8.1} MB        ", proj_1m / (1024.0 * 1024.0))
-                } else if r == 3 {
-                    format!("5m Ingest Target : {:8.1} MB        ", proj_5m / (1024.0 * 1024.0))
-                } else if r == 4 {
-                    format!("10m Ingest Target: {:8.1} MB        ", proj_10m / (1024.0 * 1024.0))
-                } else {
-                    " ".repeat(38)
-                };
-
-                let right_str = &chart_lines[r];
-
-                lines.push(Line::from(vec![
-                    Span::styled("│ ", style_orange),
-                    Span::styled(left_str, style_cyan),
-                    Span::styled(" │ ", style_orange),
-                    Span::styled(right_str.clone(), style_yellow),
-                    Span::styled(" │", style_orange),
-                ]));
-            }
-
-            lines.push(Line::from(vec![
-                Span::styled("├───────────────────────────────────────┼──────────────────────────────────────┤", style_orange)
-            ]));
-            
-            let control_left_1 = "CONTROLS: [P] Pause  [-] Slow Down    ";
-            let control_right_1 = format!("STATUS: THROTTLE: {:3}ms            ", throttle_delay);
-            lines.push(Line::from(vec![
-                Span::styled("│ ", style_orange),
-                Span::styled(control_left_1, style_purple),
-                Span::styled(" │ ", style_orange),
-                Span::styled(control_right_1, style_purple),
-                Span::styled(" │", style_orange),
-            ]));
-
-            let control_left_2 = "          [+] Speed Up  [Q] Abort     ";
-            let control_right_2 = format!("        STATE   : {:7}          ", pause_status);
-            lines.push(Line::from(vec![
-                Span::styled("│ ", style_orange),
-                Span::styled(control_left_2, style_orange),
-                Span::styled(" │ ", style_orange),
-                Span::styled(control_right_2, style_orange),
-                Span::styled(" │", style_orange),
-            ]));
-
-            lines.push(Line::from(vec![
-                Span::styled("╰───────────────────────────────────────┴──────────────────────────────────────╯", style_orange)
-            ]));
-        }
-    }
-
     terminal.draw(|f| {
         let area = f.size();
         let cols = area.width;
         let rows = area.height;
+
+        // Clear the screen to remove previous terminal remnants
+        f.render_widget(Clear, area);
 
         if cols < 80 || rows < 15 {
             let warning_lines = vec![
@@ -665,12 +371,308 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
             15,
         );
 
-        let paragraph = Paragraph::new(lines);
-        f.render_widget(paragraph, rect);
+        // Split into 15 individual rows
+        let row_rects = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(vec![Constraint::Length(1); 15])
+            .split(rect);
+
+        // Row helper for 3-column layout (left border, left content, mid divider, right content, right border)
+        let render_row = |f: &mut ratatui::Frame, y_rect: Rect, left_span: Span, right_span: Span| {
+            let cols = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Length(2),  // "│ "
+                    Constraint::Length(38), // Left content
+                    Constraint::Length(3),  // " │ "
+                    Constraint::Length(35), // Right content
+                    Constraint::Length(2),  // " │"
+                ])
+                .split(y_rect);
+            
+            f.render_widget(Paragraph::new(Line::from(Span::styled("│ ", style_orange))), cols[0]);
+            f.render_widget(Paragraph::new(Line::from(left_span)), cols[1]);
+            f.render_widget(Paragraph::new(Line::from(Span::styled(" │ ", style_orange))), cols[2]);
+            f.render_widget(Paragraph::new(Line::from(right_span)), cols[3]);
+            f.render_widget(Paragraph::new(Line::from(Span::styled(" │", style_orange))), cols[4]);
+        };
+
+        // Row 0: Top border
+        let top_border = Paragraph::new(Line::from(Span::styled(
+            "┌─── LCARS COMMAND PANEL ─ [ SYSTEM: ACTIVE ] ─────────────────────────────────┐",
+            style_orange
+        )));
+        f.render_widget(top_border, row_rects[0]);
+
+        match state.mode {
+            TuiMode::Split => {
+                let mut total_in = 0;
+                let mut total_out = 0;
+
+                for stripe in &state.stripes {
+                    total_in += stripe.bytes_processed;
+                    total_out += stripe.bytes_written;
+                }
+
+                let speed = if elapsed > 0.0 {
+                    total_in as f64 / elapsed
+                } else {
+                    0.0
+                };
+
+                let eta_str = if total_in == 0 {
+                    "Estimating...".to_string()
+                } else if total_in >= state.total_input_size {
+                    "0s (Complete)".to_string()
+                } else if speed > 0.0 {
+                    let remaining = state.total_input_size.saturating_sub(total_in);
+                    let eta_secs = (remaining as f64 / speed).round() as usize;
+                    format!("{}s", eta_secs)
+                } else {
+                    "--".to_string()
+                };
+
+                let ratio = if total_out > 0 {
+                    total_in as f64 / total_out as f64
+                } else {
+                    1.0
+                };
+
+                // Row 1: Ingested & Speed
+                let left_str_1 = format!(
+                    "Ingested : {:7.2} MB / {:7.2} MB",
+                    total_in as f64 / (1024.0 * 1024.0),
+                    state.total_input_size as f64 / (1024.0 * 1024.0)
+                );
+                let right_str_1 = format!(
+                    "Speed: {:5.1} MB/s",
+                    speed / (1024.0 * 1024.0)
+                );
+                render_row(f, row_rects[1], Span::styled(left_str_1, style_cyan), Span::styled(right_str_1, style_cyan));
+
+                // Row 2: Output & Time
+                let left_str_2 = format!(
+                    "Output   : {:7.2} MB ({:5.2}x Ratio)",
+                    total_out as f64 / (1024.0 * 1024.0),
+                    ratio
+                );
+                let right_str_2 = format!(
+                    "Time : {:5.1}s (ETA: {:<13})",
+                    elapsed,
+                    eta_str
+                );
+                render_row(f, row_rects[2], Span::styled(left_str_2, style_cyan), Span::styled(right_str_2, style_cyan));
+
+                // Row 3: Divider 1
+                f.render_widget(Paragraph::new(Line::from(Span::styled(
+                    "├───────────────────────────────────────┬──────────────────────────────────────┤",
+                    style_orange
+                ))), row_rects[3]);
+
+                // Row 4: Body Headers
+                render_row(
+                    f,
+                    row_rects[4],
+                    Span::styled("STRIPE SECTORS PROGRESS", style_purple),
+                    Span::styled("INGEST SPEED HISTORY (35s)", style_purple)
+                );
+
+                // Rows 5..10: Sectors Progress & History Chart
+                let chart_lines = render_history_chart(&state.speed_history, 6);
+                for r in 0..6 {
+                    let left_span = if r < state.stripes.len() {
+                        let stripe = &state.stripes[r];
+                        let pct = if stripe.total_bytes > 0 {
+                            (stripe.bytes_processed as f64 / stripe.total_bytes as f64) * 100.0
+                        } else {
+                            0.0
+                        };
+                        let bar_len = 15;
+                        let filled = std::cmp::min(((pct / 100.0) * bar_len as f64) as usize, bar_len);
+                        let bar: String = std::iter::repeat('█')
+                            .take(filled)
+                            .chain(std::iter::repeat('░').take(bar_len - filled))
+                            .collect();
+                        let stripe_ratio = if stripe.bytes_written > 0 {
+                            stripe.bytes_processed as f64 / stripe.bytes_written as f64
+                        } else {
+                            1.0
+                        };
+                        Span::styled(format!(
+                            "Sec {:02}: [{}] {:3.0}% ({:4.1}x)",
+                            stripe.id,
+                            bar,
+                            pct,
+                            stripe_ratio
+                        ), style_cyan)
+                    } else {
+                        Span::raw("")
+                    };
+
+                    let right_span = Span::styled(chart_lines[r].clone(), style_yellow);
+                    render_row(f, row_rects[5 + r], left_span, right_span);
+                }
+
+                // Row 11: Divider 2
+                f.render_widget(Paragraph::new(Line::from(Span::styled(
+                    "├───────────────────────────────────────┼──────────────────────────────────────┤",
+                    style_orange
+                ))), row_rects[11]);
+
+                // Row 12: Controls 1
+                let control_left_1 = "CONTROLS: [P] Pause  [-] Slow Down";
+                let control_right_1 = format!("STATUS: THROTTLE: {:3}ms", throttle_delay);
+                render_row(
+                    f,
+                    row_rects[12],
+                    Span::styled(control_left_1, style_purple),
+                    Span::styled(control_right_1, style_purple)
+                );
+
+                // Row 13: Controls 2
+                let control_left_2 = "          [+] Speed Up  [Q] Abort";
+                let control_right_2 = format!("        STATE   : {:7}", pause_status);
+                render_row(
+                    f,
+                    row_rects[13],
+                    Span::styled(control_left_2, style_orange),
+                    Span::styled(control_right_2, style_orange)
+                );
+
+                // Row 14: Bottom border
+                f.render_widget(Paragraph::new(Line::from(Span::styled(
+                    "╰───────────────────────────────────────┴──────────────────────────────────────╯",
+                    style_orange
+                ))), row_rects[14]);
+            }
+            TuiMode::Stream => {
+                let speed_in = if elapsed > 0.0 {
+                    state.bytes_read as f64 / elapsed
+                } else {
+                    0.0
+                };
+                let speed_out = if elapsed > 0.0 {
+                    state.bytes_written as f64 / elapsed
+                } else {
+                    0.0
+                };
+
+                let ratio = if state.bytes_written > 0 {
+                    state.bytes_read as f64 / state.bytes_written as f64
+                } else {
+                    1.0
+                };
+
+                let proj_1m = speed_in * 60.0;
+                let proj_5m = speed_in * 300.0;
+                let proj_10m = speed_in * 600.0;
+
+                // Row 1: Ingested & Speed
+                let left_str = format!(
+                    "Ingested : {:7.2} MB",
+                    state.bytes_read as f64 / (1024.0 * 1024.0)
+                );
+                let right_str = format!(
+                    "Speed: {:5.1} MB/s",
+                    speed_in / (1024.0 * 1024.0)
+                );
+                render_row(f, row_rects[1], Span::styled(left_str, style_cyan), Span::styled(right_str, style_cyan));
+
+                // Row 2: Output & Speed
+                let left_str_2 = format!(
+                    "Output   : {:7.2} MB ({:5.2}x Ratio)",
+                    state.bytes_written as f64 / (1024.0 * 1024.0),
+                    ratio
+                );
+                let right_str_2 = format!(
+                    "Speed: {:5.1} MB/s",
+                    speed_out / (1024.0 * 1024.0)
+                );
+                render_row(f, row_rects[2], Span::styled(left_str_2, style_cyan), Span::styled(right_str_2, style_cyan));
+
+                // Row 3: Divider 1
+                f.render_widget(Paragraph::new(Line::from(Span::styled(
+                    "├───────────────────────────────────────┬──────────────────────────────────────┤",
+                    style_orange
+                ))), row_rects[3]);
+
+                // Row 4: Body Headers
+                render_row(
+                    f,
+                    row_rects[4],
+                    Span::styled("TRANSPORTER BUFFER CAPACITY", style_purple),
+                    Span::styled("INGEST SPEED HISTORY (35s)", style_purple)
+                );
+
+                // Rows 5..10: Transporter Buffer & Projections & Speed History Chart
+                let chart_lines = render_history_chart(&state.speed_history, 6);
+                for r in 0..6 {
+                    let left_span = if r == 0 {
+                        let cap = state.queue_capacity;
+                        let depth = state.queue_depth;
+                        let cap_f = if cap > 0 { cap } else { 1 };
+                        let bar_len = 15;
+                        let filled = std::cmp::min((depth * bar_len) / cap_f, bar_len);
+                        let bar: String = std::iter::repeat('█')
+                            .take(filled)
+                            .chain(std::iter::repeat('░').take(bar_len - filled))
+                            .collect();
+                        Span::styled(format!(
+                            "Buffer: [{}] {:2}/{:2} blk",
+                            bar,
+                            depth,
+                            cap
+                        ), style_cyan)
+                    } else if r == 2 {
+                        Span::styled(format!("1m Ingest Target : {:8.1} MB", proj_1m / (1024.0 * 1024.0)), style_cyan)
+                    } else if r == 3 {
+                        Span::styled(format!("5m Ingest Target : {:8.1} MB", proj_5m / (1024.0 * 1024.0)), style_cyan)
+                    } else if r == 4 {
+                        Span::styled(format!("10m Ingest Target: {:8.1} MB", proj_10m / (1024.0 * 1024.0)), style_cyan)
+                    } else {
+                        Span::raw("")
+                    };
+
+                    let right_span = Span::styled(chart_lines[r].clone(), style_yellow);
+                    render_row(f, row_rects[5 + r], left_span, right_span);
+                }
+
+                // Row 11: Divider 2
+                f.render_widget(Paragraph::new(Line::from(Span::styled(
+                    "├───────────────────────────────────────┼──────────────────────────────────────┤",
+                    style_orange
+                ))), row_rects[11]);
+
+                // Row 12: Controls 1
+                let control_left_1 = "CONTROLS: [P] Pause  [-] Slow Down";
+                let control_right_1 = format!("STATUS: THROTTLE: {:3}ms", throttle_delay);
+                render_row(
+                    f,
+                    row_rects[12],
+                    Span::styled(control_left_1, style_purple),
+                    Span::styled(control_right_1, style_purple)
+                );
+
+                // Row 13: Controls 2
+                let control_left_2 = "          [+] Speed Up  [Q] Abort";
+                let control_right_2 = format!("        STATE   : {:7}", pause_status);
+                render_row(
+                    f,
+                    row_rects[13],
+                    Span::styled(control_left_2, style_orange),
+                    Span::styled(control_right_2, style_orange)
+                );
+
+                // Row 14: Bottom border
+                f.render_widget(Paragraph::new(Line::from(Span::styled(
+                    "╰───────────────────────────────────────┴──────────────────────────────────────╯",
+                    style_orange
+                ))), row_rects[14]);
+            }
+        }
     })?;
 
     Ok(())
-
 }
 
 #[cfg(test)]
