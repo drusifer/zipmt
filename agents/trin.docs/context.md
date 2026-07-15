@@ -3,9 +3,11 @@
 This file tracks the current state of test findings, patterns, and verification metrics for the QA Guardian (Trin).
 
 ## Recent Decisions
-- **Passed TUI Snapshot UAT Gate**: Verified the two generated snapshot layout files in `src/snapshots/`. Layout outputs match expected columns, progress bars, and rates exactly.
-- **Passed LCARS TUI Upgrade Gate**: Verified full-screen layout grids, keyboard listeners, thread pause/throttling sleeping loops, and rolling historical speed charts.
-- **Approved Full test suite**: All 12 tests (7 unit, 5 integration) pass successfully.
+- **Passed Phase 1 Ratatui Migration UAT Gate**: Verified TUI runs by default on normal compression, and auto-fallback disables TUI correctly when outputs/inputs are not interactive TTYs or redirected to stdout.
+- **Passed CLI cleanup**: Verified that the `-T` / `--tui` option is removed from command-line arguments.
+- **Passed Phase 2 Event Loop & Throttling UAT Gate**: Verified that the main thread keyboard event polling loop (using crossterm `event::poll`/`read` at 100ms tick rate) operates correctly, manages atomic pause (`IS_PAUSED`) and throttle delay (`THROTTLE_DELAY_MS`), and handles key commands (`+`/`=`, `-`, `p`/`P`, `q`/`Esc` abort paths) properly. Checked that background compression threads cleanly pause and throttle via `check_throttle`.
+- **Passed Phase 3 Widgets & Layout Snapshots UAT Gate**: Verified that layout snapshot tests compile and assert correctly using Ratatui's `TestBackend` buffer cell symbol assertions. Checked that the LCARS dashboard panels and widgets render correctly in both Split and Stream modes under testing, validating alignment, progress sectors, transporter buffer capacity, and rolling speed history.
+- **Approved Test Suite**: Verified that all 20 tests (13 unit, 7 integration) pass successfully under `make test-rust` with BypassSandbox: true.
 
 ---
-*Last updated: 2026-07-14T11:23:10*
+*Last updated: 2026-07-14T20:07:00-04:00*

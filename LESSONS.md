@@ -1,7 +1,7 @@
 Lessons learned catalog detailing dependency compilation, GLib concurrency deprecation, and safety warnings.
 
 TLDR:
-    Impact: Highlights critical setup steps, API warnings, and high-risk CLI behaviors.
+    Impact: Highlights critical setup steps, API warnings, high-risk CLI behaviors, TUI testing strategies, and non-blocking event loop practices.
     Next Steps: Periodically update as build issues or bug discoveries occur.
 
 # Project Lessons Learned (LESSONS.md)
@@ -57,3 +57,23 @@ This document indexes critical lessons learned during the development, compilati
 - **The Issue:** The statement `if err != nil { err = reader.Verify() }` means that if `xz.NewReader` fails and returns an error, the code attempts to call `.Verify()` on a `nil` `reader` pointer, leading to a nil-pointer dereference panic. If it succeeds, the validation is skipped.
 - **The Solution:** Return the error immediately if `err != nil`. Only invoke methods on `reader` when `err == nil`.
 - **The Rule:** Never invoke methods on struct pointers returned alongside non-nil errors, as the pointer is likely `nil`.
+
+---
+
+## 6. Lesson: Using `TestBackend` for TUI Layout Snapshot Testing
+- **Date:** 2026-07-14
+- > **Tags:** #Testing #TUI #Rust #Ratatui
+- **Context:** Snapshot testing terminal layouts historically relied on writing raw strings to dummy files, stripping ANSI escape sequences, and asserting them. This was error-prone, hard to format, and broke easily when styling (colors, borders) changed.
+- **The Issue:** Traditional integration/PTY testing is heavy, environment-dependent, and hard to run in automated CI pipelines without standard terminals.
+- **The Solution:** Use Ratatui's `TestBackend` mock terminal with a fixed size (e.g., 80x15). The test renders the layout onto the `TestBackend` buffer, then converts the buffer cell symbols (`cell.symbol()`) sequentially to a clean, formatted plain-text grid, which is stored and verified using `insta::assert_snapshot!`.
+- **The Rule:** Use an in-memory `TestBackend` mock terminal for rendering validation and snapshot assertions. Avoid manual ANSI sequence stripping in favor of structured buffer inspection.
+
+---
+
+## 7. Lesson: Non-blocking Inner Event Draining Loops in Crossterm
+- **Date:** 2026-07-14
+- > **Tags:** #Crossterm #TUI #EventLoop #Concurrency
+- **Context:** The main TUI event loop uses `event::poll` with a tick rate of 100ms.
+- **The Issue:** Under heavy event generation (e.g., dragging to resize the terminal window, or holding down speed adjustment/throttling keys), polling once per loop iteration introduces event lag. The queue of terminal inputs becomes backlogged, causing sluggish user responsiveness.
+- **The Solution:** Once `event::poll(tick_rate)` returns true, execute a nested non-blocking loop `while event::poll(Duration::from_millis(0)).unwrap_or(false)` to read and process all pending events in the queue in a single frame.
+- **The Rule:** When handling input events in crossterm, always wrap the event read in an inner loop polling with zero-duration to drain all immediately pending inputs, preventing command lag.

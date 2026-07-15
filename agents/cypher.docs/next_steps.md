@@ -1,13 +1,14 @@
 # Next Steps
 
 ## Immediate Next Action
-- Wait for Mouse's planning and Neo's implementation.
+- Wait for Smith (@Smith) to perform UX/acceptance review of the combined stories/architecture in `docs/USER_STORIES_RATATUI.md` and approve.
 
 ## Waiting On
-- Mouse (@mouse) to verify tasks and planning.
+- Smith (@Smith) for `*user review` or `*user approve` gate.
 
 ## Planned Work
-- [ ] Review UAT results for LCARS TUI from Trin.
+- [ ] Incorporate Smith feedback if rejected.
+- [ ] Let Mouse plan the sprint tasks after approval.
 
 ---
-*Last updated: 2026-07-14T11:20:55*
+*Last updated: 2026-07-14T19:45:00*

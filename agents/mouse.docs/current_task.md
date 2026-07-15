@@ -2,23 +2,23 @@
 
 **Status:** Completed
 **Assigned to:** Mouse
-**Started:** 2026-07-14T11:24:07
-**Finished:** 2026-07-14T11:24:25
+**Started:** 2026-07-14T20:09:29
+**Finished:** 2026-07-14T20:11:00
 
 ## Task Description
-Close the `zipmt-rust` TUI LCARS Upgrade sprint. Verify task board status, compile final summary metrics, and publish sprint close report.
+Perform sprint close for the Ratatui Migration Sprint: audit tasks, update sprint logs/velocity files, update state, and announce closing to the team.
 
 ## Progress
-- [x] Verify root `task.md` task board is completed
-- [x] Compile sprint achievements and verify test coverage passes
-- [x] Update Mouse state files (context, next_steps)
-- [x] Publish sprint close report to CHAT.md and to the user
+- [x] Record completion of the Ratatui Migration Sprint in `sprint_log.md`
+- [x] Update team velocity metrics in `velocity.md`
+- [x] Update state files (`context.md`, `current_task.md`, `next_steps.md`) under `agents/mouse.docs/`
+- [x] Post final sprint close message to CHAT.md
 
 ## Blockers
 None
 
 ## Oracle Consultations
-None yet
+None
 
 ---
-*Last updated: 2026-07-14T11:24:25*
+*Last updated: 2026-07-14T20:11:00*

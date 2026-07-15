@@ -2,22 +2,18 @@
 source: src/tui.rs
 expression: clean_output
 ---
-
-
-
-
 ┌─── LCARS COMMAND PANEL ─ [ SYSTEM: ACTIVE ] ─────────────────────────────────┐
 │ Ingested :    0.17 MB /    0.39 MB     │ Speed:   0.1 MB/s                   │
-│ Output   :    0.07 MB ( 2.50x Ratio)   │ Time :   1.2s (ETA: 2s          )      │
+│ Output   :    0.07 MB ( 2.50x Ratio)   │ Time :   1.2s (ETA: 2s           )  │
 ├───────────────────────────────────────┬──────────────────────────────────────┤
-│ STRIPE SECTORS PROGRESS             │ INGEST SPEED HISTORY (35s)    │
-│ Sec 00: [███████████████] 100% ( 2.5x)  │                                  ▃█ │
-│ Sec 01: [███████░░░░░░░░]  50% ( 2.5x)  │                                 ▆██ │
-│ Sec 02: [░░░░░░░░░░░░░░░]   0% ( 1.0x)  │                               ▃████ │
-│ Sec 03: [███░░░░░░░░░░░░]  25% ( 2.5x)  │                              ▆█████ │
+│ STRIPE SECTORS PROGRESS                │ INGEST SPEED HISTORY (35s)          │
+│ Sec 00: [███████████████] 100% ( 2.5x) │                                  ▃█ │
+│ Sec 01: [███████░░░░░░░░]  50% ( 2.5x) │                                 ▆██ │
+│ Sec 02: [░░░░░░░░░░░░░░░]   0% ( 1.0x) │                               ▃████ │
+│ Sec 03: [███░░░░░░░░░░░░]  25% ( 2.5x) │                              ▆█████ │
 │                                        │                            ▃███████ │
 │                                        │                           ▆████████ │
 ├───────────────────────────────────────┼──────────────────────────────────────┤
 │ CONTROLS: [P] Pause  [-] Slow Down     │ STATUS: THROTTLE:   0ms             │
-│           [+] Speed Up  [Q] Abort      │         STATE   : RUNNING            │
+│           [+] Speed Up  [Q] Abort      │         STATE   : RUNNING           │
 ╰───────────────────────────────────────┴──────────────────────────────────────╯

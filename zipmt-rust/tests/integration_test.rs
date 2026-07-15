@@ -179,14 +179,14 @@ fn test_integration_tui_mode() {
     let original_data = b"Some repetitive data to trigger TUI redraw loops. ".repeat(100);
     std::fs::write(&input_path, &original_data).unwrap();
 
-    // Run with --tui / -T
+    // Run by setting ZIPMT_FORCE_TUI environment variable (as -T was removed)
     let output = Command::new(&bin)
         .arg(&input_path)
         .arg("-o")
         .arg(&output_path)
         .arg("-a")
         .arg("gz")
-        .arg("-T")
+        .env("ZIPMT_FORCE_TUI", "1")
         .output()
         .unwrap();
 
@@ -198,3 +198,50 @@ fn test_integration_tui_mode() {
         stderr_str
     );
 }
+
+#[test]
+fn test_integration_tui_size_env_fallback() {
+    let bin = get_bin_path();
+    let output = Command::new(&bin)
+        .env("TEST_QUERY_SIZE", "1")
+        .env("COLUMNS", "137")
+        .env("LINES", "42")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .unwrap();
+
+    let out_str = String::from_utf8_lossy(&output.stdout);
+    assert!(out_str.trim().contains("SIZE:137x42"), "Expected to detect size 137x42, got: {}", out_str);
+}
+
+#[test]
+fn test_integration_tui_size_tty_fallback() {
+    let bin = get_bin_path();
+    let mut cmd = Command::new(&bin);
+    cmd.env("TEST_QUERY_SIZE", "1")
+       .env_remove("COLUMNS")
+       .env_remove("LINES")
+       .stdout(Stdio::piped());
+
+    // If /dev/tty is available, we expect the output to match stty size
+    if let Ok(file) = std::fs::File::open("/dev/tty") {
+        if let Ok(stty_output) = Command::new("stty")
+            .arg("size")
+            .stdin(file)
+            .output()
+        {
+            let out_str = String::from_utf8_lossy(&stty_output.stdout);
+            let parts: Vec<&str> = out_str.split_whitespace().collect();
+            if parts.len() == 2 {
+                if let (Ok(expected_rows), Ok(expected_cols)) = (parts[0].parse::<u16>(), parts[1].parse::<u16>()) {
+                    let output = cmd.output().unwrap();
+                    let out_str = String::from_utf8_lossy(&output.stdout);
+                    let expected_str = format!("SIZE:{}x{}", expected_cols, expected_rows);
+                    assert!(out_str.trim().contains(&expected_str), "Expected to detect size {}, got: {}", expected_str, out_str);
+                }
+            }
+        }
+    }
+}
+

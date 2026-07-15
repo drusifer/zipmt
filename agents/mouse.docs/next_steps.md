@@ -1,13 +1,14 @@
 # Next Steps
 
 ## Immediate Next Action
-- Publish the final TUI LCARS Upgrade sprint close report.
+- Wait for Cypher (@Cypher) to perform the final `*pm launch` for the Ratatui Migration Sprint.
 
 ## Waiting On
-None
+- Cypher (@Cypher) to review retrospective feedback and launch.
 
 ## Planned Work
-- [ ] Publish sprint close report and close sprint.
+- [ ] Facilitate the sprint retrospective (`*sprint retro`) with the team.
+- [ ] Collaborate with Cypher and Morpheus to prepare the next sprint backlog.
 
 ---
-*Last updated: 2026-07-14T11:24:07*
+*Last updated: 2026-07-14T20:11:00*

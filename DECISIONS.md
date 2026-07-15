@@ -1,7 +1,7 @@
 Architectural Decision Record (ADR) detailing design choices for zipmt.
 
 TLDR:
-    Impact: Captures structural decisions (GLib, file-deletion by default, static splitting, stream throttling).
+    Impact: Captures structural decisions (GLib, file-deletion by default, static splitting, stream throttling, Ratatui UI library, main event loop).
     Next Steps: Document lessons learned from these choices.
 
 # Architectural Decisions Record (DECISIONS.md)
@@ -77,3 +77,29 @@ This document records the key architectural and design decisions made during the
 - **Rationale:** Keeps write operations single-threaded to avoid multi-thread write contention and disk head thrashing, while avoiding complex mutex-locked priority queues.
 - **Consequences:**
   - Storing uncompressed/compressed parts in the map increases memory consumption temporarily if block compression times diverge significantly.
+
+---
+
+## 7. Decision: Migration to Ratatui Widget-Based TUI Rendering
+- **Date:** 2026-07-14
+- **Status:** Approved
+- **Context:** The original C and Go versions used custom ANSI-escaped terminal output. This approach is fragile, hard to maintain, layout calculations are manual and prone to errors, and rendering is difficult to unit/snapshot test reliably.
+- **Decision:** Migrate the Rust TUI implementation to use the `ratatui` library, utilizing its `Layout` constraints, `Rect` math, and standard widget rendering models (e.g., `Paragraph`, `Line`, `Span`, `Style`) to represent the retro LCARS console.
+- **Rationale:** Ratatui provides a clean, declarative layout engine and component hierarchy. This separates rendering logic from terminal handle control, improves reliability on resized/constrained terms, and integrates nicely with snapshot test backends.
+- **Consequences:**
+  - Standardizes UI rendering on a modern, well-supported Rust TUI framework.
+  - Simplifies adding new panels, status widgets, and styling without manual string calculations.
+  - Requires adding the `ratatui` dependency to `Cargo.toml`.
+
+---
+
+## 8. Decision: Crossterm Main-Thread Event Polling & Draining Loop
+- **Date:** 2026-07-14
+- **Status:** Approved
+- **Context:** Listening to user input (e.g., pause, speed adjustment, or abort keys) originally required spawning a separate background input thread. This creates synchronization complexities, multi-threading overhead, and makes clean terminal teardown on abort difficult.
+- **Decision:** Integrate a crossterm-based event loop on the main thread using `event::poll` with a tick rate of 100ms, and an inner loop to drain all immediately pending events at a duration of 0ms.
+- **Rationale:** Event polling directly on the main thread simplifies keyboard input handling and terminal resizing. The non-blocking inner event draining loop ensures that multiple rapid keystrokes or resize events are processed instantly without accumulating queue lag.
+- **Consequences:**
+  - Eliminates the secondary keyboard input listener thread, simplifying thread synchronization.
+  - Ensures clean exit handling (e.g., Ctrl+C or abort keys) because the main thread can trigger cleanup and exit immediately.
+  - Coordinates with the compression threads through lightweight, atomic synchronization variables (`IS_PAUSED`, `THROTTLE_DELAY_MS`).

@@ -10,3 +10,9 @@
 # Python caches
 __pycache__/
 *.pyc
+
+# Local files & backups
+.rustup_home/
+backup.tar
+*.png
+target/

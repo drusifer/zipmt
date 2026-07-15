@@ -1,16 +1,20 @@
-# Agent Local Context Template:
+# Agent Local Context (context.md)
 
-Agents *must* use this for keeping their context.md files organized
+This file tracks the HCI evaluations, gate reviews, and usability criteria maintained by the HCI Expert (Smith).
 
-> ## Recent Decisions
->
->
-> ## Key Findings
-> - {WHAT}: 
->   - {WHY}
->
-> ## Important Notes
-> {EXTESIVE Notes}
->
->---
->*Last updated: [timestamp]*
+## Recent Decisions
+- **Approved Phase 3 Ratatui TUI Rendering (2026-07-14)**: Usability testing (`*user test`) completed and approved. Verified migration of TUI layouts to Ratatui widgets, ensuring proper integration of retro LCARS palette colors and borders, system metrics visibility, and robust layout tests.
+- **Approved Ratatui Stories & Architecture**: Approved the combined specifications in [docs/USER_STORIES_RATATUI.md](file:///home/drusifer/Projects/zipmt/docs/USER_STORIES_RATATUI.md) for UX and implementation safety.
+- **Approved Phase 2 Keyboard Controls & Throttling (2026-07-14)**: Verified correct behavior of keyboard event loop, real-time LCARS status rendering, pause/resume mechanisms, +/- throttling controls, and clean abort signal handling.
+
+## Key Findings
+- **LCARS Retro Theme Guidelines**: Ratatui colors successfully mapped (Orange 208 for borders/panels, Cyan 117 for metrics/data, Lavender 147 for header labels, and Yellow 220 for the rolling history chart).
+- **Auto TUI Fallback**: Disabling the TUI automatically during output pipe/redirection prevents ANSI sequence clutter from corrupting compressed files, resolving a critical CLI usability hazard (Heuristic 5: Error Prevention).
+- **Throttling and Pause Responsive UX**: Keyboard throttling (+/- speed controls) and pause (P) react instantly at a 64KB chunk resolution. 
+- **Graceful Abort & Cleanup**: Hitting Q/Esc cleanly exits the application with exit code 2 and removes the incomplete/corrupt destination file, preventing disk litter (Heuristic 5: Error Prevention, Heuristic 3: User Control & Freedom).
+- **Speed History Preservation**: During Pause (P), speed history updates are frozen rather than zeroed out. This maintains historical context for the user when resuming (Heuristic 1: Visibility of System Status).
+- **Heuristic 1 (Visibility of System Status)**: Real-time cumulative statistics, Sector-level progress bar gauges (Split Mode), Transporter buffer depth/capacity (Stream Mode), speed projections, and 35-second rolling speed charts provide continuous and rich status feedback.
+- **Heuristic 8 (Aesthetic & Minimalist Design)**: Centered layout logic (constrained to 80x15 viewport) looks stunning on any terminal size and avoids visual noise, organizing blocks via structured boundaries and unified labels.
+
+---
+*Last updated: 2026-07-14T20:07:30*

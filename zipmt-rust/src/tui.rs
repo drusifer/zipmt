@@ -5,6 +5,12 @@ use std::time::Instant;
 
 use crossterm::event::{self, Event, KeyCode};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use ratatui::backend::CrosstermBackend;
+use ratatui::Terminal;
+use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Span};
+use ratatui::layout::Rect;
+use ratatui::widgets::Paragraph;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TuiMode {
@@ -83,39 +89,80 @@ impl TuiState {
     }
 }
 
-struct TerminalGuard;
+struct TerminalGuard {
+    pub terminal: Terminal<CrosstermBackend<std::io::Stderr>>,
+}
 impl TerminalGuard {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self, std::io::Error> {
         let _ = enable_raw_mode();
         let mut stderr = std::io::stderr();
         let _ = crossterm::queue!(stderr, EnterAlternateScreen, crossterm::cursor::Hide);
         let _ = stderr.flush();
-        TerminalGuard
+        let backend = CrosstermBackend::new(stderr);
+        let terminal = Terminal::new(backend)?;
+        Ok(TerminalGuard { terminal })
     }
 }
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
+        let _ = disable_raw_mode();
         let mut stderr = std::io::stderr();
         let _ = crossterm::queue!(stderr, crossterm::cursor::Show, LeaveAlternateScreen);
         let _ = stderr.flush();
-        let _ = disable_raw_mode();
     }
 }
 
-fn query_initial_size() -> (u16, u16) {
+pub fn query_initial_size() -> (u16, u16) {
     if let (Ok(cols_str), Ok(rows_str)) = (std::env::var("COLUMNS"), std::env::var("LINES")) {
         if let (Ok(cols), Ok(rows)) = (cols_str.parse::<u16>(), rows_str.parse::<u16>()) {
             return (cols, rows);
         }
     }
 
-    // Try running tput cols and tput lines
-    if let Ok(output_cols) = std::process::Command::new("tput").arg("cols").output() {
-        if let Ok(output_lines) = std::process::Command::new("tput").arg("lines").output() {
-            let cols_str = String::from_utf8_lossy(&output_cols.stdout).trim().to_string();
-            let lines_str = String::from_utf8_lossy(&output_lines.stdout).trim().to_string();
-            if let (Ok(cols), Ok(rows)) = (cols_str.parse::<u16>(), lines_str.parse::<u16>()) {
-                return (cols, rows);
+    // Try stty size with redirected TTY or stderr/proc streams
+    for path in &["/dev/tty", "/dev/stderr", "/proc/self/fd/2"] {
+        if let Ok(file) = std::fs::File::open(path) {
+            if let Ok(output) = std::process::Command::new("stty")
+                .arg("size")
+                .stdin(file)
+                .output()
+            {
+                let out_str = String::from_utf8_lossy(&output.stdout);
+                let parts: Vec<&str> = out_str.split_whitespace().collect();
+                if parts.len() == 2 {
+                    if let (Ok(rows), Ok(cols)) = (parts[0].parse::<u16>(), parts[1].parse::<u16>()) {
+                        if cols > 0 && rows > 0 {
+                            return (cols, rows);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Try tput cols and tput lines with redirected TTY or stderr/proc streams
+    for path in &["/dev/tty", "/dev/stderr", "/proc/self/fd/2"] {
+        if let Ok(file) = std::fs::File::open(path) {
+            if let Ok(file_clone) = file.try_clone() {
+                if let Ok(output_cols) = std::process::Command::new("tput")
+                    .arg("cols")
+                    .stdin(file)
+                    .output()
+                {
+                    if let Ok(output_lines) = std::process::Command::new("tput")
+                        .arg("lines")
+                        .stdin(file_clone)
+                        .output()
+                    {
+                        let cols_str = String::from_utf8_lossy(&output_cols.stdout).trim().to_string();
+                        let lines_str = String::from_utf8_lossy(&output_lines.stdout).trim().to_string();
+                        if let (Ok(cols), Ok(rows)) = (cols_str.parse::<u16>(), lines_str.parse::<u16>()) {
+                            if cols > 0 && rows > 0 {
+                                return (cols, rows);
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -123,21 +170,26 @@ fn query_initial_size() -> (u16, u16) {
     crossterm::terminal::size().unwrap_or((80, 24))
 }
 
-pub fn start_tui_thread(state: Arc<Mutex<TuiState>>) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || {
-        let guard = TerminalGuard::new();
+pub fn run_tui_on_main_thread(
+    state: Arc<Mutex<TuiState>>,
+    comp_handle: std::thread::JoinHandle<Result<(), crate::compressor::ZipError>>,
+) -> Result<(), crate::compressor::ZipError> {
+    let mut guard = TerminalGuard::new().map_err(crate::compressor::ZipError::Io)?;
 
-        // Get initial terminal size
-        let (w, h) = query_initial_size();
-        {
-            let mut guard = state.lock().unwrap();
-            guard.terminal_cols = w;
-            guard.terminal_rows = h;
-        }
-        
-        loop {
-            // Listen for terminal events
-            if event::poll(std::time::Duration::from_millis(0)).unwrap() {
+    // Get initial terminal size
+    let (w, h) = query_initial_size();
+    {
+        let mut guard_state = state.lock().unwrap();
+        guard_state.terminal_cols = w;
+        guard_state.terminal_rows = h;
+    }
+    
+    let tick_rate = std::time::Duration::from_millis(100);
+    loop {
+        // Listen for terminal events with a poll tick rate
+        if event::poll(tick_rate).unwrap_or(false) {
+            // Drain all pending events to keep event handling responsive and avoid queue lag
+            while event::poll(std::time::Duration::from_millis(0)).unwrap_or(false) {
                 match event::read().unwrap() {
                     Event::Key(key) => {
                         match key.code {
@@ -172,42 +224,50 @@ pub fn start_tui_thread(state: Arc<Mutex<TuiState>>) -> std::thread::JoinHandle<
                     _ => {}
                 }
             }
+        }
 
-            let is_complete = {
-                let mut state_guard = state.lock().unwrap();
+        let is_complete = {
+            let mut state_guard = state.lock().unwrap();
 
-                // Append current speed to history
-                let elapsed = state_guard.start_time.elapsed().as_secs_f64();
-                let total_in = match state_guard.mode {
-                    TuiMode::Split => state_guard.stripes.iter().map(|s| s.bytes_processed).sum::<usize>(),
-                    TuiMode::Stream => state_guard.bytes_read,
-                };
-                let speed = if elapsed > 0.0 {
-                    total_in as f64 / elapsed
-                } else {
-                    0.0
-                };
-
-                if !crate::IS_PAUSED.load(Ordering::Relaxed) {
-                    state_guard.speed_history.push(speed);
-                    if state_guard.speed_history.len() > 35 {
-                        state_guard.speed_history.remove(0);
-                    }
-                }
-
-                let mut stderr = std::io::stderr();
-                draw_tui(&state_guard, &mut stderr);
-                let _ = stderr.flush();
-                state_guard.is_complete
+            // Append current speed to history
+            let elapsed = state_guard.start_time.elapsed().as_secs_f64();
+            let total_in = match state_guard.mode {
+                TuiMode::Split => state_guard.stripes.iter().map(|s| s.bytes_processed).sum::<usize>(),
+                TuiMode::Stream => state_guard.bytes_read,
+            };
+            let speed = if elapsed > 0.0 {
+                total_in as f64 / elapsed
+            } else {
+                0.0
             };
 
-            if is_complete {
-                break;
+            if !crate::IS_PAUSED.load(Ordering::Relaxed) {
+                state_guard.speed_history.push(speed);
+                if state_guard.speed_history.len() > 35 {
+                    state_guard.speed_history.remove(0);
+                }
             }
 
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            let _ = draw_tui(&mut guard.terminal, &state_guard);
+            state_guard.is_complete
+        };
+
+        if is_complete {
+            break;
         }
-    })
+
+        if comp_handle.is_finished() {
+            break;
+        }
+    }
+
+    match comp_handle.join() {
+        Ok(res) => res,
+        Err(_) => Err(crate::compressor::ZipError::Io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Compression thread panicked",
+        ))),
+    }
 }
 
 fn render_history_chart(history: &[f64], height: usize) -> Vec<String> {
@@ -259,9 +319,10 @@ fn render_history_chart(history: &[f64], height: usize) -> Vec<String> {
     chart_lines
 }
 
-pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
-    let mut lines: Vec<String> = Vec::new();
-
+pub fn draw_tui<B: ratatui::backend::Backend>(
+    terminal: &mut ratatui::Terminal<B>,
+    state: &TuiState,
+) -> Result<(), std::io::Error> {
     // Standardized/mockable elapsed time for layout consistency in tests
     #[cfg(test)]
     let elapsed = 1.234;
@@ -269,11 +330,10 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
     let elapsed = state.start_time.elapsed().as_secs_f64();
 
     // Style Colors: LCARS Palette
-    let orange = "\x1B[38;5;208m";
-    let purple = "\x1B[38;5;147m";
-    let cyan = "\x1B[38;5;117m";
-    let yellow = "\x1B[38;5;220m";
-    let reset = "\x1B[0m";
+    let style_orange = Style::default().fg(Color::Indexed(208));
+    let style_purple = Style::default().fg(Color::Indexed(147));
+    let style_cyan = Style::default().fg(Color::Indexed(117));
+    let style_yellow = Style::default().fg(Color::Indexed(220));
 
     let pause_status = if crate::IS_PAUSED.load(Ordering::Relaxed) {
         "PAUSED "
@@ -282,10 +342,15 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
     };
     let throttle_delay = crate::THROTTLE_DELAY_MS.load(Ordering::Relaxed);
 
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Top border
+    lines.push(Line::from(vec![
+        Span::styled("┌─── LCARS COMMAND PANEL ─ [ SYSTEM: ACTIVE ] ─────────────────────────────────┐", style_orange)
+    ]));
+
     match state.mode {
         TuiMode::Split => {
-            lines.push(format!("{}┌─── LCARS COMMAND PANEL ─ [ SYSTEM: ACTIVE ] ─────────────────────────────────┐{}", orange, reset));
-
             let mut total_in = 0;
             let mut total_out = 0;
 
@@ -327,17 +392,13 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
                 "Speed: {:5.1} MB/s                  ",
                 speed / (1024.0 * 1024.0)
             );
-            lines.push(format!(
-                "{}│ {}{}{} │ {}{}{} │{}",
-                orange,
-                cyan,
-                left_str,
-                orange,
-                cyan,
-                right_str,
-                orange,
-                reset
-            ));
+            lines.push(Line::from(vec![
+                Span::styled("│ ", style_orange),
+                Span::styled(left_str, style_cyan),
+                Span::styled(" │ ", style_orange),
+                Span::styled(right_str, style_cyan),
+                Span::styled(" │", style_orange),
+            ]));
 
             let left_str_2 = format!(
                 "Output   : {:7.2} MB ({:5.2}x Ratio)  ",
@@ -345,32 +406,31 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
                 ratio
             );
             let right_str_2 = format!(
-                "Time : {:5.1}s (ETA: {:<12})     ",
+                "Time : {:5.1}s (ETA: {:<13}) ",
                 elapsed,
                 eta_str
             );
-            lines.push(format!(
-                "{}│ {}{}{} │ {}{}{} │{}",
-                orange,
-                cyan,
-                left_str_2,
-                orange,
-                cyan,
-                right_str_2,
-                orange,
-                reset
-            ));
+            lines.push(Line::from(vec![
+                Span::styled("│ ", style_orange),
+                Span::styled(left_str_2, style_cyan),
+                Span::styled(" │ ", style_orange),
+                Span::styled(right_str_2, style_cyan),
+                Span::styled(" │", style_orange),
+            ]));
 
-            lines.push(format!("{}├───────────────────────────────────────┬──────────────────────────────────────┤{}", orange, reset));
-            lines.push(format!(
-                "{}│ {}STRIPE SECTORS PROGRESS             {}│ {}INGEST SPEED HISTORY (35s)    {}│{}",
-                orange,
-                purple,
-                orange,
-                purple,
-                orange,
-                reset
-            ));
+            lines.push(Line::from(vec![
+                Span::styled("├───────────────────────────────────────┬──────────────────────────────────────┤", style_orange)
+            ]));
+
+            let left_header = "STRIPE SECTORS PROGRESS               ";
+            let right_header = "INGEST SPEED HISTORY (35s)         ";
+            lines.push(Line::from(vec![
+                Span::styled("│ ", style_orange),
+                Span::styled(left_header, style_purple),
+                Span::styled(" │ ", style_orange),
+                Span::styled(right_header, style_purple),
+                Span::styled(" │", style_orange),
+            ]));
 
             let chart_lines = render_history_chart(&state.speed_history, 6);
             for r in 0..6 {
@@ -393,7 +453,7 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
                         1.0
                     };
                     format!(
-                        "Sec {:02}: [{}] {:3.0}% ({:4.1}x) ",
+                        "Sec {:02}: [{}] {:3.0}% ({:4.1}x)",
                         stripe.id,
                         bar,
                         pct,
@@ -405,54 +465,44 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
 
                 let right_str = &chart_lines[r];
 
-                lines.push(format!(
-                    "{}│ {}{}{} │ {}{} {}│{}",
-                    orange,
-                    cyan,
-                    left_str,
-                    orange,
-                    yellow,
-                    right_str,
-                    orange,
-                    reset
-                ));
+                lines.push(Line::from(vec![
+                    Span::styled("│ ", style_orange),
+                    Span::styled(left_str, style_cyan),
+                    Span::styled(" │ ", style_orange),
+                    Span::styled(right_str.clone(), style_yellow),
+                    Span::styled(" │", style_orange),
+                ]));
             }
 
-            lines.push(format!("{}├───────────────────────────────────────┼──────────────────────────────────────┤{}", orange, reset));
+            lines.push(Line::from(vec![
+                Span::styled("├───────────────────────────────────────┼──────────────────────────────────────┤", style_orange)
+            ]));
             
             let control_left_1 = "CONTROLS: [P] Pause  [-] Slow Down    ";
             let control_right_1 = format!("STATUS: THROTTLE: {:3}ms            ", throttle_delay);
-            lines.push(format!(
-                "{}│ {}{}{} │ {}{}{} │{}",
-                orange,
-                purple,
-                control_left_1,
-                orange,
-                purple,
-                control_right_1,
-                orange,
-                reset
-            ));
+            lines.push(Line::from(vec![
+                Span::styled("│ ", style_orange),
+                Span::styled(control_left_1, style_purple),
+                Span::styled(" │ ", style_orange),
+                Span::styled(control_right_1, style_purple),
+                Span::styled(" │", style_orange),
+            ]));
 
             let control_left_2 = "          [+] Speed Up  [Q] Abort     ";
-            let control_right_2 = format!("        STATE   : {:7}           ", pause_status);
-            lines.push(format!(
-                "{}│ {}{}{} │ {}{}{} │{}",
-                orange,
-                orange,
-                control_left_2,
-                orange,
-                orange,
-                control_right_2,
-                orange,
-                reset
-            ));
+            let control_right_2 = format!("        STATE   : {:7}          ", pause_status);
+            lines.push(Line::from(vec![
+                Span::styled("│ ", style_orange),
+                Span::styled(control_left_2, style_orange),
+                Span::styled(" │ ", style_orange),
+                Span::styled(control_right_2, style_orange),
+                Span::styled(" │", style_orange),
+            ]));
 
-            lines.push(format!("{}╰───────────────────────────────────────┴──────────────────────────────────────╯{}", orange, reset));
+            lines.push(Line::from(vec![
+                Span::styled("╰───────────────────────────────────────┴──────────────────────────────────────╯", style_orange)
+            ]));
         }
         TuiMode::Stream => {
-            lines.push(format!("{}┌─── LCARS COMMAND PANEL ─ [ SYSTEM: ACTIVE ] ─────────────────────────────────┐{}", orange, reset));
-
             let speed_in = if elapsed > 0.0 {
                 state.bytes_read as f64 / elapsed
             } else {
@@ -482,17 +532,13 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
                 "Speed: {:5.1} MB/s                  ",
                 speed_in / (1024.0 * 1024.0)
             );
-            lines.push(format!(
-                "{}│ {}{}{} │ {}{}{} │{}",
-                orange,
-                cyan,
-                left_str,
-                orange,
-                cyan,
-                right_str,
-                orange,
-                reset
-            ));
+            lines.push(Line::from(vec![
+                Span::styled("│ ", style_orange),
+                Span::styled(left_str, style_cyan),
+                Span::styled(" │ ", style_orange),
+                Span::styled(right_str, style_cyan),
+                Span::styled(" │", style_orange),
+            ]));
 
             let left_str_2 = format!(
                 "Output   : {:7.2} MB ({:5.2}x Ratio)  ",
@@ -503,28 +549,26 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
                 "Speed: {:5.1} MB/s                  ",
                 speed_out / (1024.0 * 1024.0)
             );
-            lines.push(format!(
-                "{}│ {}{}{} │ {}{}{} │{}",
-                orange,
-                cyan,
-                left_str_2,
-                orange,
-                cyan,
-                right_str_2,
-                orange,
-                reset
-            ));
+            lines.push(Line::from(vec![
+                Span::styled("│ ", style_orange),
+                Span::styled(left_str_2, style_cyan),
+                Span::styled(" │ ", style_orange),
+                Span::styled(right_str_2, style_cyan),
+                Span::styled(" │", style_orange),
+            ]));
 
-            lines.push(format!("{}├───────────────────────────────────────┬──────────────────────────────────────┤{}", orange, reset));
-            lines.push(format!(
-                "{}│ {}TRANSPORTER BUFFER CAPACITY          {}│ {}INGEST SPEED HISTORY (35s)    {}│{}",
-                orange,
-                purple,
-                orange,
-                purple,
-                orange,
-                reset
-            ));
+            lines.push(Line::from(vec![
+                Span::styled("├───────────────────────────────────────┬──────────────────────────────────────┤", style_orange)
+            ]));
+            let left_header = "TRANSPORTER BUFFER CAPACITY           ";
+            let right_header = "INGEST SPEED HISTORY (35s)         ";
+            lines.push(Line::from(vec![
+                Span::styled("│ ", style_orange),
+                Span::styled(left_header, style_purple),
+                Span::styled(" │ ", style_orange),
+                Span::styled(right_header, style_purple),
+                Span::styled(" │", style_orange),
+            ]));
 
             let chart_lines = render_history_chart(&state.speed_history, 6);
             for r in 0..6 {
@@ -556,79 +600,86 @@ pub fn draw_tui(state: &TuiState, target: &mut dyn std::io::Write) {
 
                 let right_str = &chart_lines[r];
 
-                lines.push(format!(
-                    "{}│ {}{}{} │ {}{} {}│{}",
-                    orange,
-                    cyan,
-                    left_str,
-                    orange,
-                    yellow,
-                    right_str,
-                    orange,
-                    reset
-                ));
+                lines.push(Line::from(vec![
+                    Span::styled("│ ", style_orange),
+                    Span::styled(left_str, style_cyan),
+                    Span::styled(" │ ", style_orange),
+                    Span::styled(right_str.clone(), style_yellow),
+                    Span::styled(" │", style_orange),
+                ]));
             }
 
-            lines.push(format!("{}├───────────────────────────────────────┼──────────────────────────────────────┤{}", orange, reset));
+            lines.push(Line::from(vec![
+                Span::styled("├───────────────────────────────────────┼──────────────────────────────────────┤", style_orange)
+            ]));
             
             let control_left_1 = "CONTROLS: [P] Pause  [-] Slow Down    ";
             let control_right_1 = format!("STATUS: THROTTLE: {:3}ms            ", throttle_delay);
-            lines.push(format!(
-                "{}│ {}{}{} │ {}{}{} │{}",
-                orange,
-                purple,
-                control_left_1,
-                orange,
-                purple,
-                control_right_1,
-                orange,
-                reset
-            ));
+            lines.push(Line::from(vec![
+                Span::styled("│ ", style_orange),
+                Span::styled(control_left_1, style_purple),
+                Span::styled(" │ ", style_orange),
+                Span::styled(control_right_1, style_purple),
+                Span::styled(" │", style_orange),
+            ]));
 
             let control_left_2 = "          [+] Speed Up  [Q] Abort     ";
-            let control_right_2 = format!("        STATE   : {:7}           ", pause_status);
-            lines.push(format!(
-                "{}│ {}{}{} │ {}{}{} │{}",
-                orange,
-                orange,
-                control_left_2,
-                orange,
-                orange,
-                control_right_2,
-                orange,
-                reset
-            ));
+            let control_right_2 = format!("        STATE   : {:7}          ", pause_status);
+            lines.push(Line::from(vec![
+                Span::styled("│ ", style_orange),
+                Span::styled(control_left_2, style_orange),
+                Span::styled(" │ ", style_orange),
+                Span::styled(control_right_2, style_orange),
+                Span::styled(" │", style_orange),
+            ]));
 
-            lines.push(format!("{}╰───────────────────────────────────────┴──────────────────────────────────────╯{}", orange, reset));
+            lines.push(Line::from(vec![
+                Span::styled("╰───────────────────────────────────────┴──────────────────────────────────────╯", style_orange)
+            ]));
         }
     }
 
-    let cols = state.terminal_cols;
-    let rows = state.terminal_rows;
+    terminal.draw(|f| {
+        let area = f.size();
+        let cols = area.width;
+        let rows = area.height;
 
-    let pad_left = (cols as usize).saturating_sub(80) / 2;
-    let pad_top = (rows as usize).saturating_sub(16) / 2;
+        let pad_left = (cols as usize).saturating_sub(80) / 2;
+        let pad_top = (rows as usize).saturating_sub(16) / 2;
 
-    // Reset cursor to home position and clear screen
-    let _ = write!(target, "\x1B[H\x1B[2J");
+        let rect = Rect::new(
+            pad_left as u16,
+            pad_top as u16,
+            std::cmp::min(80, cols),
+            std::cmp::min(15, rows),
+        );
 
-    for _ in 0..pad_top {
-        let _ = writeln!(target);
-    }
+        let paragraph = Paragraph::new(lines);
+        f.render_widget(paragraph, rect);
+    })?;
 
-    let padding = " ".repeat(pad_left);
-    for line in lines {
-        let _ = writeln!(target, "{}{}", padding, line);
-    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
 
-    fn strip_ansi(input: &str) -> String {
-        let re = regex::Regex::new(r"\x1B\[[0-9;]*[a-zA-Z]").unwrap();
-        re.replace_all(input, "").into_owned()
+    fn get_buffer_string(backend: &TestBackend) -> String {
+        let buffer = backend.buffer();
+        let mut output = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                let cell = buffer.get(x, y);
+                output.push_str(cell.symbol());
+            }
+            if y < buffer.area.height - 1 {
+                output.push('\n');
+            }
+        }
+        output
     }
 
     #[test]
@@ -653,10 +704,10 @@ mod tests {
 
         state.speed_history = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
 
-        let mut buf = Vec::new();
-        draw_tui(&state, &mut buf);
-        let output = String::from_utf8(buf).unwrap();
-        let clean_output = strip_ansi(&output);
+        let backend = TestBackend::new(80, 15);
+        let mut terminal = Terminal::new(backend).unwrap();
+        draw_tui(&mut terminal, &state).unwrap();
+        let clean_output = get_buffer_string(terminal.backend());
 
         insta::assert_snapshot!(clean_output);
     }
@@ -670,41 +721,145 @@ mod tests {
 
         state.speed_history = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
 
-        let mut buf = Vec::new();
-        draw_tui(&state, &mut buf);
-        let output = String::from_utf8(buf).unwrap();
-        let clean_output = strip_ansi(&output);
+        let backend = TestBackend::new(80, 15);
+        let mut terminal = Terminal::new(backend).unwrap();
+        draw_tui(&mut terminal, &state).unwrap();
+        let clean_output = get_buffer_string(terminal.backend());
 
         insta::assert_snapshot!(clean_output);
     }
 
     #[test]
     fn test_tui_layout_split_overflow() {
-        // Test that if processed bytes exceed total_bytes, filled bar is capped and doesn't panic
         let mut state = TuiState::new_split(1, 100 * 1024);
         state.stripes[0].total_bytes = 100000;
         state.stripes[0].bytes_processed = 120000; // 120%
         state.stripes[0].bytes_written = 40000;
 
-        let mut buf = Vec::new();
-        // Should not panic due to index out of bounds or negative repeats
-        draw_tui(&state, &mut buf);
-        let output = String::from_utf8(buf).unwrap();
-        let clean_output = strip_ansi(&output);
+        let backend = TestBackend::new(80, 15);
+        let mut terminal = Terminal::new(backend).unwrap();
+        draw_tui(&mut terminal, &state).unwrap();
+        let clean_output = get_buffer_string(terminal.backend());
         assert!(clean_output.contains("120%"));
     }
 
     #[test]
     fn test_tui_layout_stream_overflow() {
-        // Test that if queue_depth exceeds capacity, progress bar is capped and doesn't panic
         let mut state = TuiState::new_stream(8, 0);
         state.queue_depth = 12; // Exceeds cap (8)
 
-        let mut buf = Vec::new();
-        // Should not panic due to capacity overflow / subtraction underflow
-        draw_tui(&state, &mut buf);
-        let output = String::from_utf8(buf).unwrap();
-        let clean_output = strip_ansi(&output);
+        let backend = TestBackend::new(80, 15);
+        let mut terminal = Terminal::new(backend).unwrap();
+        draw_tui(&mut terminal, &state).unwrap();
+        let clean_output = get_buffer_string(terminal.backend());
         assert!(clean_output.contains("12/ 8 blk"));
+    }
+
+    #[test]
+    fn test_query_initial_size_matches_stty() {
+        let (cols, rows) = query_initial_size();
+        
+        let file = std::fs::File::open("/dev/tty").expect("Unable to open /dev/tty");
+        let output = std::process::Command::new("stty")
+            .arg("size")
+            .stdin(file)
+            .output()
+            .expect("Failed to run stty size");
+        let out_str = String::from_utf8_lossy(&output.stdout);
+        let parts: Vec<&str> = out_str.split_whitespace().collect();
+        if parts.len() == 2 {
+            if let (Ok(expected_rows), Ok(expected_cols)) = (parts[0].parse::<u16>(), parts[1].parse::<u16>()) {
+                assert_eq!(cols, expected_cols, "cols must match stty cols");
+                assert_eq!(rows, expected_rows, "rows must match stty rows");
+            }
+        }
+    }
+
+    #[test]
+    fn test_tui_centering_coordinates() {
+        let state = TuiState::new_split(1, 100 * 1024);
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        draw_tui(&mut terminal, &state).unwrap();
+        
+        let buffer = terminal.backend().buffer();
+        let mut row_5_str = String::new();
+        for x in 0..80 {
+            row_5_str.push_str(buffer.get(x, 4).symbol());
+        }
+        assert!(
+            row_5_str.contains("┌───"),
+            "Row 5 (0-indexed 4) must contain the top border ┌───, got: {:?}",
+            row_5_str
+        );
+    }
+
+    #[test]
+    fn test_tui_centering_coordinates_non_standard() {
+        let mut state = TuiState::new_split(1, 100 * 1024);
+        state.terminal_cols = 120;
+        state.terminal_rows = 40;
+
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        draw_tui(&mut terminal, &state).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let mut row_13_str = String::new();
+        for x in 0..120 {
+            row_13_str.push_str(buffer.get(x, 12).symbol());
+        }
+        assert!(
+            row_13_str[20..].starts_with("┌───"),
+            "Row 13 (0-indexed 12) starting at col 20 must contain the top border ┌───, got: {:?}",
+            row_13_str
+        );
+    }
+
+    #[test]
+    fn test_tui_layout_perfect_alignment() {
+        // Test alignment in Split Mode
+        {
+            let mut state = TuiState::new_split(4, 400 * 1024);
+            state.speed_history = vec![1.0, 2.0, 3.0];
+            let backend = TestBackend::new(80, 15);
+            let mut terminal = Terminal::new(backend).unwrap();
+            draw_tui(&mut terminal, &state).unwrap();
+            let clean_output = get_buffer_string(terminal.backend());
+            
+            for line in clean_output.lines() {
+                if line.starts_with('┌') || line.starts_with('│') || line.starts_with('├') || line.starts_with('╰') {
+                    assert_eq!(
+                        line.chars().count(),
+                        80,
+                        "Split Mode line is not exactly 80 characters wide: {:?} (length {})",
+                        line,
+                        line.chars().count()
+                    );
+                }
+            }
+        }
+
+        // Test alignment in Stream Mode
+        {
+            let mut state = TuiState::new_stream(8, 0);
+            state.speed_history = vec![1.0, 2.0, 3.0];
+            let backend = TestBackend::new(80, 15);
+            let mut terminal = Terminal::new(backend).unwrap();
+            draw_tui(&mut terminal, &state).unwrap();
+            let clean_output = get_buffer_string(terminal.backend());
+            
+            for line in clean_output.lines() {
+                if line.starts_with('┌') || line.starts_with('│') || line.starts_with('├') || line.starts_with('╰') {
+                    assert_eq!(
+                        line.chars().count(),
+                        80,
+                        "Stream Mode line is not exactly 80 characters wide: {:?} (length {})",
+                        line,
+                        line.chars().count()
+                    );
+                }
+            }
+        }
     }
 }
