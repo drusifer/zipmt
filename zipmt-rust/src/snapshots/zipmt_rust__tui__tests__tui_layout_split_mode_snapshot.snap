@@ -14,7 +14,7 @@ expression: clean_output
 │                                        │      │                   ▃███████   │
 │                                        │   0B ┼                  ▆████████   │
 ├────────────────────────────────────────┼─────────────────────────────────────┤
-│ SYSTEM LOG MESSAGES (SCROLL: ▲/▼)      │ KNOBS: [Pool:4] [Chunk:0.1MB] [QCap │
+│ SYSTEM LOG MESSAGES (SCROLL: ▲/▼)      │ Knobs: P:4 C:0.1M Q:0 L:6           │
 │                                                                              │
 │                                                                              │
 │                                                                              │

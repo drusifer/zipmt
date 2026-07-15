@@ -247,7 +247,7 @@ mod tests {
         let mut input_cursor = Cursor::new(original_data.clone());
         let mut output_buffer = Vec::new();
 
-        let compressor = GzipCompressor;
+        let compressor = GzipCompressor { level: 6 };
         let result = compress_stream(&mut input_cursor, &mut output_buffer, &compressor, 4, None);
         assert!(result.is_ok(), "Stream mode compression failed: {:?}", result.err());
 

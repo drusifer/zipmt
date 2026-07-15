@@ -57,10 +57,12 @@ pub struct TuiState {
     pub workers: Vec<WorkerState>,
     pub output_buffer: Vec<u64>,
     pub next_expected_seq: u64,
+    // Compression level
+    pub level: u32,
 }
 
 impl TuiState {
-    pub fn new_split(total_stripes: usize, total_input_size: usize) -> Self {
+    pub fn new_split(total_stripes: usize, total_input_size: usize, level: u32) -> Self {
         let mut stripes = Vec::new();
         for id in 0..total_stripes {
             stripes.push(StripeProgress {
@@ -89,10 +91,11 @@ impl TuiState {
             workers: Vec::new(),
             output_buffer: Vec::new(),
             next_expected_seq: 0,
+            level,
         }
     }
 
-    pub fn new_stream(queue_capacity: usize, total_input_size: usize, num_workers: usize) -> Self {
+    pub fn new_stream(queue_capacity: usize, total_input_size: usize, num_workers: usize, level: u32) -> Self {
         let mut workers = Vec::new();
         for id in 0..num_workers {
             workers.push(WorkerState {
@@ -120,6 +123,7 @@ impl TuiState {
             workers,
             output_buffer: Vec::new(),
             next_expected_seq: 0,
+            level,
         }
     }
 }
@@ -809,10 +813,11 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
         };
         let qcap = state.queue_capacity;
         let knobs_right = Line::from(vec![
-            Span::styled("KNOBS: ", style_purple),
-            Span::styled(format!("[Pool:{}] ", pool_size), style_yellow),
-            Span::styled(format!("[Chunk:{}] ", chunk_size_str), style_yellow),
-            Span::styled(format!("[QCap:{}]", qcap), style_yellow),
+            Span::styled("Knobs: ", style_purple),
+            Span::styled(format!("P:{} ", pool_size), style_yellow),
+            Span::styled(format!("C:{} ", chunk_size_str.replace("MB", "M")), style_yellow),
+            Span::styled(format!("Q:{} ", qcap), style_yellow),
+            Span::styled(format!("L:{}", state.level), style_yellow),
         ]);
         render_row(f, row_rects[12], log_header_left, knobs_right);
 
@@ -931,7 +936,7 @@ mod tests {
 
     #[test]
     fn test_tui_layout_split_mode_snapshot() {
-        let mut state = TuiState::new_split(4, 400 * 1024);
+        let mut state = TuiState::new_split(4, 400 * 1024, 6);
         
         state.stripes[0].total_bytes = 102400;
         state.stripes[0].bytes_processed = 102400;
@@ -961,7 +966,7 @@ mod tests {
 
     #[test]
     fn test_tui_layout_stream_mode_snapshot() {
-        let mut state = TuiState::new_stream(8, 0, 4);
+        let mut state = TuiState::new_stream(8, 0, 4, 6);
         state.bytes_read = 50 * 1024 * 1024;
         state.bytes_written = 20 * 1024 * 1024;
         state.queue_depth = 3;
@@ -978,7 +983,7 @@ mod tests {
 
     #[test]
     fn test_tui_layout_split_overflow() {
-        let mut state = TuiState::new_split(1, 100 * 1024);
+        let mut state = TuiState::new_split(1, 100 * 1024, 6);
         state.stripes[0].total_bytes = 100000;
         state.stripes[0].bytes_processed = 120000; // 120%
         state.stripes[0].bytes_written = 40000;
@@ -992,7 +997,7 @@ mod tests {
 
     #[test]
     fn test_tui_layout_stream_overflow() {
-        let mut state = TuiState::new_stream(8, 0, 4);
+        let mut state = TuiState::new_stream(8, 0, 4, 6);
         state.queue_depth = 12; // Exceeds cap (8)
 
         let backend = TestBackend::new(80, 22);
@@ -1024,7 +1029,7 @@ mod tests {
 
     #[test]
     fn test_tui_centering_coordinates() {
-        let state = TuiState::new_split(1, 100 * 1024);
+        let state = TuiState::new_split(1, 100 * 1024, 6);
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         draw_tui(&mut terminal, &state).unwrap();
@@ -1043,7 +1048,7 @@ mod tests {
 
     #[test]
     fn test_tui_centering_coordinates_non_standard() {
-        let mut state = TuiState::new_split(1, 100 * 1024);
+        let mut state = TuiState::new_split(1, 100 * 1024, 6);
         state.terminal_cols = 120;
         state.terminal_rows = 40;
 
@@ -1067,7 +1072,7 @@ mod tests {
     fn test_tui_layout_perfect_alignment() {
         // Test alignment in Split Mode
         {
-            let mut state = TuiState::new_split(4, 400 * 1024);
+            let mut state = TuiState::new_split(4, 400 * 1024, 6);
             state.speed_history = vec![1.0, 2.0, 3.0];
             let backend = TestBackend::new(80, 22);
             let mut terminal = Terminal::new(backend).unwrap();
@@ -1089,7 +1094,7 @@ mod tests {
 
         // Test alignment in Stream Mode
         {
-            let mut state = TuiState::new_stream(8, 0, 4);
+            let mut state = TuiState::new_stream(8, 0, 4, 6);
             state.speed_history = vec![1.0, 2.0, 3.0];
             let backend = TestBackend::new(80, 22);
             let mut terminal = Terminal::new(backend).unwrap();

@@ -53,11 +53,13 @@ fn check_throttle() {
 }
 
 /// Gzip compressor adapter.
-pub struct GzipCompressor;
+pub struct GzipCompressor {
+    pub level: u32,
+}
 
 impl Compressor for GzipCompressor {
     fn compress_with_progress(&self, input: &[u8], on_progress: &(dyn Fn(usize) + Send + Sync)) -> Result<Vec<u8>, ZipError> {
-        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::new(self.level));
         let chunk_size = 64 * 1024;
         for chunk in input.chunks(chunk_size) {
             check_throttle();
@@ -79,11 +81,13 @@ impl Compressor for GzipCompressor {
 }
 
 /// Bzip2 compressor adapter.
-pub struct Bzip2Compressor;
+pub struct Bzip2Compressor {
+    pub level: u32,
+}
 
 impl Compressor for Bzip2Compressor {
     fn compress_with_progress(&self, input: &[u8], on_progress: &(dyn Fn(usize) + Send + Sync)) -> Result<Vec<u8>, ZipError> {
-        let mut encoder = BzEncoder::new(Vec::new(), bzip2::Compression::default());
+        let mut encoder = BzEncoder::new(Vec::new(), bzip2::Compression::new(self.level));
         let chunk_size = 64 * 1024;
         for chunk in input.chunks(chunk_size) {
             check_throttle();
@@ -105,11 +109,13 @@ impl Compressor for Bzip2Compressor {
 }
 
 /// Xz compressor adapter.
-pub struct XzCompressor;
+pub struct XzCompressor {
+    pub level: u32,
+}
 
 impl Compressor for XzCompressor {
     fn compress_with_progress(&self, input: &[u8], on_progress: &(dyn Fn(usize) + Send + Sync)) -> Result<Vec<u8>, ZipError> {
-        let mut encoder = XzEncoder::new(Vec::new(), 6);
+        let mut encoder = XzEncoder::new(Vec::new(), self.level);
         let chunk_size = 64 * 1024;
         for chunk in input.chunks(chunk_size) {
             check_throttle();
@@ -164,16 +170,16 @@ mod tests {
 
     #[test]
     fn test_gzip_compressor() {
-        test_compressor_behavior(&GzipCompressor);
+        test_compressor_behavior(&GzipCompressor { level: 6 });
     }
 
     #[test]
     fn test_bzip2_compressor() {
-        test_compressor_behavior(&Bzip2Compressor);
+        test_compressor_behavior(&Bzip2Compressor { level: 6 });
     }
 
     #[test]
     fn test_xz_compressor() {
-        test_compressor_behavior(&XzCompressor);
+        test_compressor_behavior(&XzCompressor { level: 6 });
     }
 }

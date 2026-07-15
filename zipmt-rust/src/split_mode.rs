@@ -117,7 +117,7 @@ mod tests {
         let original_content = b"This is some sample text repeating. ".repeat(100);
         std::fs::write(&input_path, &original_content).unwrap();
 
-        let compressor = GzipCompressor;
+        let compressor = GzipCompressor { level: 6 };
         let result = compress_file(&input_path, &output_path, &compressor, 4, None);
         assert!(result.is_ok(), "Split mode compression failed");
 

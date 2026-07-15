@@ -14,7 +14,7 @@ expression: clean_output
 │ Gaps : NO GAPS                         │      │                   ▃███████   │
 │ Target 1m: 2431.1M  5m: 12155.6M       │   0B ┼                  ▆████████   │
 ├────────────────────────────────────────┼─────────────────────────────────────┤
-│ SYSTEM LOG MESSAGES (SCROLL: ▲/▼)      │ KNOBS: [Pool:4] [Chunk:4.0MB] [QCap │
+│ SYSTEM LOG MESSAGES (SCROLL: ▲/▼)      │ Knobs: P:4 C:4.0M Q:8 L:6           │
 │                                                                              │
 │                                                                              │
 │                                                                              │

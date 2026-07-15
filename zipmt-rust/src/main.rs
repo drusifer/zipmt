@@ -102,6 +102,10 @@ struct Args {
     /// Display terminal progress UI.
     #[arg(short = 'T', long, default_value_t = false)]
     tui: bool,
+
+    /// Compression level (1-9, defaults to 6).
+    #[arg(short = 'l', long, default_value_t = 6)]
+    level: u32,
 }
 
 
@@ -115,9 +119,9 @@ fn main() {
     let args = Args::parse();
 
     let compressor: Arc<Box<dyn Compressor + Send + Sync>> = Arc::new(match args.algo.as_str() {
-        "gz" => Box::new(GzipCompressor),
-        "bz2" => Box::new(Bzip2Compressor),
-        "xz" => Box::new(XzCompressor),
+        "gz" => Box::new(GzipCompressor { level: args.level }),
+        "bz2" => Box::new(Bzip2Compressor { level: args.level }),
+        "xz" => Box::new(XzCompressor { level: args.level }),
         other => {
             eprintln!("Error: Unknown algorithm '{}'. Supported: xz, bz2, gz", other);
             std::process::exit(1);
@@ -294,13 +298,14 @@ fn run_app(args: Args, compressor: Arc<Box<dyn Compressor + Send + Sync>>) -> Re
             Arc::new(Mutex::new(tui::TuiState::new_stream(
                 pool_size * 2,
                 0,
-                pool_size
+                pool_size,
+                args.level,
             )))
         } else {
             let input_path = Path::new(args.input_file.as_ref().unwrap());
             let file_size = std::fs::metadata(input_path).map(|m| m.len() as usize).unwrap_or(0);
             let chunks_count = if threads_count > 0 { threads_count } else { std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4) };
-            Arc::new(Mutex::new(tui::TuiState::new_split(chunks_count, file_size)))
+            Arc::new(Mutex::new(tui::TuiState::new_split(chunks_count, file_size, args.level)))
         };
         Some(state)
     } else {
