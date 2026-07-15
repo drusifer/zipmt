@@ -326,26 +326,26 @@ fn render_history_chart(history: &[f64], height: usize) -> Vec<String> {
 
     let (top_label, bot_label) = if max_val >= 1024.0 * 1024.0 * 1024.0 {
         (
-            format!("{:4.1}G ┼", max_val / (1024.0 * 1024.0 * 1024.0)),
-            "0.0G ┼".to_string(),
+            format!("{:5.1}G ┼", max_val / (1024.0 * 1024.0 * 1024.0)),
+            "  0.0G ┼".to_string(),
         )
     } else if max_val >= 1024.0 * 1024.0 {
         (
-            format!("{:4.1}M ┼", max_val / (1024.0 * 1024.0)),
-            "0.0M ┼".to_string(),
+            format!("{:5.1}M ┼", max_val / (1024.0 * 1024.0)),
+            "  0.0M ┼".to_string(),
         )
     } else if max_val >= 1024.0 {
         (
-            format!("{:4.1}K ┼", max_val / 1024.0),
-            "0.0K ┼".to_string(),
+            format!("{:5.1}K ┼", max_val / 1024.0),
+            "  0.0K ┼".to_string(),
         )
     } else {
         (
-            format!("{:4.0}B ┼", max_val),
-            "  0B ┼".to_string(),
+            format!("{:5.0}B ┼", max_val),
+            "    0B ┼".to_string(),
         )
     };
-    let mid_label = "     │".to_string();
+    let mid_label = "       │".to_string();
 
     for r in 0..height {
         let label = if r == 0 {
