@@ -63,6 +63,11 @@ pub fn compress_stream(
                                 if guard.queue_depth > 0 {
                                     guard.queue_depth -= 1;
                                 }
+                                guard.input_queue.retain(|&x| x != block.seq_num);
+                                if worker_id < guard.workers.len() {
+                                    guard.workers[worker_id].status = "BUSY";
+                                    guard.workers[worker_id].current_chunk = Some(block.seq_num);
+                                }
                             }
                             crate::log_verbose!("Worker {} compressing block {}", worker_id, block.seq_num);
                             let compressed = compressor.compress(&block.data);
@@ -74,12 +79,25 @@ pub fn compress_stream(
                                 block.data.len(),
                                 compressed_len
                             );
+                            if let Some(ref tui) = tui_ref {
+                                let mut guard = tui.lock().unwrap();
+                                if worker_id < guard.workers.len() {
+                                    guard.workers[worker_id].status = "HOLD";
+                                }
+                            }
                             let result = CompressedBlock {
                                 seq_num: block.seq_num,
                                 data: compressed,
                             };
                             if result_tx.send(result).is_err() {
                                 break;
+                            }
+                            if let Some(ref tui) = tui_ref {
+                                let mut guard = tui.lock().unwrap();
+                                if worker_id < guard.workers.len() {
+                                    guard.workers[worker_id].status = "IDLE";
+                                    guard.workers[worker_id].current_chunk = None;
+                                }
                             }
                         }
                         None => break,
@@ -101,6 +119,11 @@ pub fn compress_stream(
             let mut seq_num = 0u64;
 
             loop {
+                // Check pause status in reader thread
+                while crate::IS_PAUSED.load(std::sync::atomic::Ordering::Relaxed) {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+
                 let mut bytes_read = 0;
                 while bytes_read < BLOCK_SIZE {
                     let n = input.read(&mut buffer[bytes_read..])?;
@@ -114,11 +137,12 @@ pub fn compress_stream(
                     break;
                 }
 
-                // Update bytes read and queue depth
+                // Update bytes read, queue depth and input queue
                 if let Some(ref tui) = tui_ref_reader {
                     let mut guard = tui.lock().unwrap();
                     guard.bytes_read += bytes_read;
                     guard.queue_depth += 1;
+                    guard.input_queue.push(seq_num);
                 }
 
                 crate::log_verbose!("Reader queued block {} ({} bytes)", seq_num, bytes_read);
@@ -145,6 +169,12 @@ pub fn compress_stream(
         for result in result_rx {
             match result.data {
                 Ok(compressed_data) => {
+                    if let Some(ref tui) = tui_ref_writer {
+                        let mut guard = tui.lock().unwrap();
+                        guard.output_buffer.push(result.seq_num);
+                        guard.output_buffer.sort_unstable();
+                        guard.next_expected_seq = next_seq_num;
+                    }
                     pending_blocks.insert(result.seq_num, compressed_data);
                 }
                 Err(e) => {
@@ -160,6 +190,8 @@ pub fn compress_stream(
                 if let Some(ref tui) = tui_ref_writer {
                     let mut guard = tui.lock().unwrap();
                     guard.bytes_written += data.len();
+                    guard.output_buffer.retain(|&x| x != next_seq_num);
+                    guard.next_expected_seq = next_seq_num + 1;
                 }
                 output.write_all(&data)?;
                 next_seq_num += 1;
@@ -179,6 +211,11 @@ pub fn compress_stream(
 
         while let Some(data) = pending_blocks.remove(&next_seq_num) {
             crate::log_verbose!("Writer flushing final block {} ({} bytes) to output", next_seq_num, data.len());
+            if let Some(ref tui) = tui_ref_writer {
+                let mut guard = tui.lock().unwrap();
+                guard.output_buffer.retain(|&x| x != next_seq_num);
+                guard.next_expected_seq = next_seq_num + 1;
+            }
             output.write_all(&data)?;
             next_seq_num += 1;
         }

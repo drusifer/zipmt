@@ -7,20 +7,20 @@ expression: clean_output
 │ Output   :   20.00 MB ( 2.50x Ratio)   │ Speed:  16.2 MB/s                   │
 ├────────────────────────────────────────┬─────────────────────────────────────┤
 │ TRANSPORTER BUFFER CAPACITY            │ INGEST SPEED HISTORY (35s)          │
-│ Buffer: [█████░░░░░░░░░░]  3/ 8 blk    │    9B ┼                         ▃█  │
-│                                        │      │                        ▆██   │
-│ 1m Ingest Target :   2431.1 MB         │      │                      ▃████   │
-│ 5m Ingest Target :  12155.6 MB         │      │                     ▆█████   │
-│ 10m Ingest Target:  24311.2 MB         │      │                   ▃███████   │
-│                                        │   0B ┼                  ▆████████   │
+│ Queue: [] (3/8 blk)                    │    9B ┼                         ▃█  │
+│ W00:[IDLE] --    W01:[IDLE] --         │      │                        ▆██   │
+│ W02:[IDLE] --    W03:[IDLE] --         │      │                      ▃████   │
+│ Out Q: [] (Next: #0)                   │      │                     ▆█████   │
+│ Gaps : NO GAPS                         │      │                   ▃███████   │
+│ Target 1m: 2431.1M  5m: 12155.6M       │   0B ┼                  ▆████████   │
 ├────────────────────────────────────────┼─────────────────────────────────────┤
-│ SYSTEM LOG MESSAGES (SCROLL: ▲/▼)      │                                     │
+│ SYSTEM LOG MESSAGES (SCROLL: ▲/▼)      │ KNOBS: [Pool:4] [Chunk:4.0MB] [QCap │
 │                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ CONTROLS: [P] Pause  [-] Slow Down     │ STATUS: THROTTLE:   0ms             │
+│ CONTROLS: [P] Pause  [-] Slow Down     │ Throt: [░░░░░░░░░░]   0ms           │
 │           [+] Speed Up  [Q] Abort      │         STATE   : RUNNING           │
 ╰────────────────────────────────────────┴─────────────────────────────────────╯

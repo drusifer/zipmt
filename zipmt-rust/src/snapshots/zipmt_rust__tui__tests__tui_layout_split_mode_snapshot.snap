@@ -14,13 +14,13 @@ expression: clean_output
 │                                        │      │                   ▃███████   │
 │                                        │   0B ┼                  ▆████████   │
 ├────────────────────────────────────────┼─────────────────────────────────────┤
-│ SYSTEM LOG MESSAGES (SCROLL: ▲/▼)      │                                     │
+│ SYSTEM LOG MESSAGES (SCROLL: ▲/▼)      │ KNOBS: [Pool:4] [Chunk:0.1MB] [QCap │
 │                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ CONTROLS: [P] Pause  [-] Slow Down     │ STATUS: THROTTLE:   0ms             │
+│ CONTROLS: [P] Pause  [-] Slow Down     │ Throt: [░░░░░░░░░░]   0ms           │
 │           [+] Speed Up  [Q] Abort      │         STATE   : RUNNING           │
 ╰────────────────────────────────────────┴─────────────────────────────────────╯

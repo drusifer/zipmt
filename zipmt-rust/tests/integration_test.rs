@@ -179,14 +179,14 @@ fn test_integration_tui_mode() {
     let original_data = b"Some repetitive data to trigger TUI redraw loops. ".repeat(100);
     std::fs::write(&input_path, &original_data).unwrap();
 
-    // Run by setting ZIPMT_FORCE_TUI environment variable (as -T was removed)
+    // Run by passing -T option
     let output = Command::new(&bin)
         .arg(&input_path)
         .arg("-o")
         .arg(&output_path)
         .arg("-a")
         .arg("gz")
-        .env("ZIPMT_FORCE_TUI", "1")
+        .arg("-T")
         .output()
         .unwrap();
 

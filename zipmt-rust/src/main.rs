@@ -6,7 +6,7 @@ pub mod stream_mode;
 pub mod tui;
 
 use std::fs::File;
-use std::io::{self, IsTerminal};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use clap::Parser;
@@ -98,6 +98,10 @@ struct Args {
     /// Verbose output / metrics.
     #[arg(short, long)]
     verbose: bool,
+
+    /// Display terminal progress UI.
+    #[arg(short = 'T', long, default_value_t = false)]
+    tui: bool,
 }
 
 
@@ -279,24 +283,18 @@ fn run_app(args: Args, compressor: Arc<Box<dyn Compressor + Send + Sync>>) -> Re
 
     // Determine if TUI mode should run based on fallback checks and args.tui flag
     let force_tui = std::env::var("ZIPMT_FORCE_TUI").is_ok();
-    let is_stdout_terminal = std::io::stdout().is_terminal();
-    let is_stderr_terminal = std::io::stderr().is_terminal();
-
-    let writing_to_stdout = args.stdout || (is_stdin && args.output.is_none());
-
-    let run_tui = force_tui || (
-        is_stderr_terminal
-        && !(writing_to_stdout && is_stdout_terminal)
-    );
+    let run_tui = args.tui || force_tui;
 
 
     // Initialize TuiState if TUI mode is active
     let tui_state = if run_tui {
         TUI_ACTIVE.store(true, Ordering::Relaxed);
         let state = if is_stdin {
+            let pool_size = if threads_count > 0 { threads_count } else { std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4) };
             Arc::new(Mutex::new(tui::TuiState::new_stream(
-                if threads_count > 0 { threads_count * 2 } else { std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4) * 2 },
-                0
+                pool_size * 2,
+                0,
+                pool_size
             )))
         } else {
             let input_path = Path::new(args.input_file.as_ref().unwrap());

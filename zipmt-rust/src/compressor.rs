@@ -46,9 +46,6 @@ pub trait Compressor: Send + Sync {
 }
 
 fn check_throttle() {
-    while crate::IS_PAUSED.load(std::sync::atomic::Ordering::Relaxed) {
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
     let delay = crate::THROTTLE_DELAY_MS.load(std::sync::atomic::Ordering::Relaxed);
     if delay > 0 {
         std::thread::sleep(std::time::Duration::from_millis(delay));
