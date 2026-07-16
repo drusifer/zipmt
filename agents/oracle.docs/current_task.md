@@ -2,25 +2,25 @@
 
 **Status:** Completed
 **Assigned to:** Oracle
-**Started:** 2026-07-14T20:07:56
-**Finished:** 2026-07-14T20:10:00
+**Started:** 2026-07-15T21:40:00
+**Finished:** 2026-07-15T21:45:00
 
 ## Task Description
-Groom TUI Ratatui Migration sprint documents, architecture, decisions, and code taxonomy. Verify task board status and hand off to Mouse.
+Groom Decoupling & Interactive LCARS UI sprint documents, updating DECISIONS.md and LESSONS.md.
 
 ## Progress
-- [x] Update `DECISIONS.md` to document TUI Ratatui migration & event loop decisions
-- [x] Update `LESSONS.md` to add lessons on `TestBackend` layout snapshot tests & non-blocking crossterm event draining
-- [x] Update `MINDMAP.md` to map `zipmt-rust` structure and components
-- [x] Verify `task.md` tasks are completed
-- [x] Update state files under `agents/oracle.docs/`
-- [x] Post update to `CHAT.md` and hand off to `@Mouse`
+- [x] Load Oracle's state files (SMP entry) (Done)
+- [x] Document Decoupling & Interactive Controls in DECISIONS.md (Decisions 10-12) (Done)
+- [x] Document metrics decoupling and text slider tracking in LESSONS.md (Lessons 12-13) (Done)
+- [x] Summarize grooming in GroomLCARSUpgrade_Summary_2026-07-15T21-45.md (Done)
+- [x] Post Groom Complete message #112 to CHAT.md (Done)
+- [x] Update Oracle's state files (SMP exit) (Done)
 
 ## Blockers
 None
 
 ## Oracle Consultations
-None yet
+None
 
 ---
-*Last updated: 2026-07-14T20:10:00*
+*Last updated: 2026-07-15T21:45:00*

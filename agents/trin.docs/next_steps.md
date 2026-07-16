@@ -1,14 +1,13 @@
 # Next Steps
 
 ## Immediate Next Action
-- Await Morpheus's code review and approval, and Smith's user testing/approval of Phase 3: Widgets & Layout Snapshots.
+- Await Morpheus's lead review and approval of the completed Decoupling & Interactive TUI Upgrade sprint tasks.
 
 ## Waiting On
-- Morpheus (@morpheus) to review Phase 3.
-- Smith (@smith) to complete usability verification/user testing for Phase 3.
+- Morpheus (@Morpheus) to perform lead review on the completed tasks and UAT verification.
 
 ## Planned Work
-- [ ] Conclude the Ratatui Migration sprint upon final review approvals.
+- [ ] Support team in closing out the sprint and planning the next phase once all approvals are secured.
 
 ---
-*Last updated: 2026-07-14T20:08:00-04:00*
+*Last updated: 2026-07-15T21:30:00-04:00*

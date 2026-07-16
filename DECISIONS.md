@@ -103,3 +103,52 @@ This document records the key architectural and design decisions made during the
   - Eliminates the secondary keyboard input listener thread, simplifying thread synchronization.
   - Ensures clean exit handling (e.g., Ctrl+C or abort keys) because the main thread can trigger cleanup and exit immediately.
   - Coordinates with the compression threads through lightweight, atomic synchronization variables (`IS_PAUSED`, `THROTTLE_DELAY_MS`).
+
+---
+
+## 9. Decision: CLI TUI Defaulting & Auto-Redirection Fallback Checks
+- **Date:** 2026-07-15
+- **Status:** Approved
+- **Context:** Running CLI utilities requires sensible defaults. Requiring users to specify `-T`/`--tui` is cumbersome, but launching a full-screen TUI when output is redirected (to a file, pipe, or script) corrupts target streams and degrades CLI interoperability.
+- **Decision:** Remove the `-T`/`--tui` CLI flag. Run in TUI mode by default for normal compression, and dynamically disable TUI mode (falling back to standard stream/raw output) if stdout is redirected (via `-c` flag or pipe redirection), if stdin/stdout are not interactive terminals (`std::io::IsTerminal`), or if stdin is redirected when reading from stdin.
+- **Rationale:** Ensures clean pipes for automated workflows while maintaining an interactive dashboard experience for users executing the tool directly in a terminal.
+- **Consequences:**
+  - Reduces interface surface complexity by removing a redundant flag.
+  - Automatically prevents data stream corruption during shell piping.
+  - Requires the `std::io::IsTerminal` trait from the Rust standard library (available in Rust 1.70+).
+
+---
+
+## 10. Decision: Unidirectional Channel-Based Progress Decoupling
+- **Date:** 2026-07-15
+- **Status:** Approved
+- **Context:** Tight coupling of `TuiState` (via `Arc<Mutex<TuiState>>`) within parallel chunk worker pools and main loops creates synchronization bottlenecks and prevents headless testing or programmatic execution of the compression pipeline as a library.
+- **Decision:** Extract compression loops into an independent library module (`pipeline.rs`) and run execution on a separate worker thread. Expose progress indicators via a unidirectional `mpsc::Sender<ProgressEvent>` channel and runtime adjustments via a cloneable `PipelineController`.
+- **Rationale:** Decoupling rendering from processing prevents frame drawing from slowing down compression, provides a clean API seam for testing, and encapsulates execution details.
+- **Consequences:**
+  - Standardizes data flow to unidirectional channel events (`ProgressEvent`), eliminating raw mutex sharing across workers.
+  - Enables full test coverage of layout rendering using mock state indicators on `TestBackend` without running compression threads.
+
+---
+
+## 11. Decision: Interactive Vertical Knobs Sliders & Crossterm Mouse Integration
+- **Date:** 2026-07-15
+- **Status:** Approved
+- **Context:** Custom keystroke adjustments (such as global `+`/`-` or `[`/`]`) do not scale well when managing more than two parameters, and lack visual feedback indicating focus or levels resembling LCARS dials.
+- **Decision:** Restructure the controls footer panel to render interactive vertical sliders with Tab-focus borders. Integrate Crossterm mouse capture to calculate click coordinates and directly adjust parameters in real-time.
+- **Rationale:** Vertical bars resemble Star Trek console reticles, offering highly refined tactile feedback. Mouse capture dramatically increases the retro-futuristic usability.
+- **Consequences:**
+  - Tab cycles widget focus cleanly between Compression Level and Throttle delay sliders.
+  - Requires handling `Event::Mouse` and converting mouse click coordinates to slider intervals.
+
+---
+
+## 12. Decision: CLI Opt-In TUI Restoration and Smart Fallback Override
+- **Date:** 2026-07-15
+- **Status:** Approved
+- **Context:** While defaulting to TUI was convenient, it violated traditional UNIX command line expectations where TUIs are strictly opt-in.
+- **Decision:** Restore the `-T` / `--tui` CLI flag. Run in TUI mode *only* if `-T` is specified and TTY checks are satisfied, while supporting an override environment variable (`ZIPMT_FORCE_TUI=1`) to bypass stdout checks for automated snapshot testing.
+- **Rationale:** Aligns the tool's behavior with standard CLI design standards while preserving automated test infrastructure.
+- **Consequences:**
+  - Restores traditional command line UX.
+  - Avoids corrupting stdout when `-T` is omitted during pipes.

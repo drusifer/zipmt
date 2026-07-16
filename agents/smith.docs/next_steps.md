@@ -1,13 +1,13 @@
 # Next Steps
 
 ## Immediate Next Action
-- Wait for Mouse/Morpheus to close the Sprint and perform final documentation grooming.
+- Wait for Mouse (@Mouse) to close the Decoupling & Interactive TUI Upgrade Sprint.
 
 ## Waiting On
-- Mouse/Morpheus for Sprint close.
+- Mouse (@Mouse) for final sprint close.
 
 ## Planned Work
-- [x] Perform usability reviews on Phase 3 implementation (e.g. detailed statistics, file layouts, verification summaries).
+- Participate in final sprint retrospective review and prepare UX criteria for future sprints.
 
 ---
-*Last updated: 2026-07-14T20:09:00*
+*Last updated: 2026-07-15T21:40:00*

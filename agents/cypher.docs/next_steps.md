@@ -1,14 +1,14 @@
 # Next Steps
 
 ## Immediate Next Action
-- Wait for Smith (@Smith) to perform UX/acceptance review of the combined stories/architecture in `docs/USER_STORIES_RATATUI.md` and approve.
+- Wait for Smith (@Smith) to perform UX/acceptance review of the interactive TUI upgrade and decoupling plan in `docs/USER_STORIES_RATATUI_UPGRADE.md`.
 
 ## Waiting On
-- Smith (@Smith) for `*user review` or `*user approve` gate.
+- Smith (@Smith) for review and approval gate (`*user review docs/USER_STORIES_RATATUI_UPGRADE.md`).
 
 ## Planned Work
-- [ ] Incorporate Smith feedback if rejected.
-- [ ] Let Mouse plan the sprint tasks after approval.
+- [ ] Incorporate feedback from user/Smith review.
+- [ ] Hand off to Mouse for task breakdown and planning in `task.md`.
 
 ---
-*Last updated: 2026-07-14T19:45:00*
+*Last updated: 2026-07-15T16:42:00*

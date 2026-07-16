@@ -10,3 +10,7 @@ This document records the historical sprint data for the `zipmt` project.
 | TUI UX Upgrade Sprint | 2026-07-14 | 5 / 5 | 12 | Upgrade TUI with retro diagnostics styling, real-time ETA, and forecasting. |
 | TUI LCARS Upgrade Sprint | 2026-07-14 | 7 / 7 | 12 | Support full-screen alternate-screen console, live charts, and pause/throttle hooks. |
 | Ratatui Migration Sprint | 2026-07-14 | 9 / 9 | 20 | Migrate TUI to widget-based Ratatui, use crossterm main event loop, and update snapshot tests to `TestBackend`. |
+| CLI Defaulting & Fallbacks Sprint | 2026-07-15 | 1 / 1 | 7 | Implement TUI defaulting and TTY auto-redirection/fallback checks. |
+| Decoupling & Interactive TUI Upgrade Sprint | 2026-07-15 | 8 / 8 | 7 | Decouple pipeline logic via channel streams, build thread-safe controller, restore -T CLI flags, create Tab-focused vertical sliders with Crossterm mouse click/drag, and update mock snapshot tests. |
+
+

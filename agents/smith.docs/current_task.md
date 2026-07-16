@@ -2,19 +2,20 @@
 
 **Status:** Completed
 **Assigned to:** Smith
-**Started:** 2026-07-14T20:06:00
-**Finished:** 2026-07-14T20:09:00
+**Started:** 2026-07-15T21:35:00
+**Finished:** 2026-07-15T21:40:00
 
 ## Task Description
-UX/HCI usability testing (`*user test`) of Phase 3 Ratatui TUI Rendering.
+Usability testing (`*user test`) of the interactive vertical sliders knobs, Tab-focus cycling, and Crossterm mouse integration.
 
 ## Progress
-- [x] Evaluate the look & feel of the migrated Ratatui TUI against retro LCARS theme guidelines.
-- [x] Verify system status visibility (Heuristic 1) and aesthetic/minimalist design (Heuristic 8) of rendering widgets.
-- [x] Build and run manual TUI test to verify layout drawing and metrics in real-time.
-- [x] Run automated layout snapshot and integration tests to ensure pixel-perfect stability.
-- [x] Update agent state files (`context.md`, `current_task.md`, `next_steps.md`).
-- [x] Post usability review summary and approval to `agents/CHAT.md`.
+- [x] Load Smith's state files (SMP entry) (Done)
+- [x] Verify layout positioning of the vertical Compression Level and Throttle sliders in draw_tui (Done)
+- [x] Verify keyboard Tab focus highlight (yellow vs purple borders) and Up/Down/+/- slider adjustments (Done)
+- [x] Verify mouse click/drag slider level mapping calculation works in TUI main thread (Done)
+- [x] Summarize usability review in VerifyLCARSSliders_Summary_2026-07-15T21-40.md (Done)
+- [x] Post usability review and approval to `agents/CHAT.md` (Done)
+- [x] Update Smith's state files (SMP exit) (Done)
 
 ## Blockers
 None
@@ -23,4 +24,4 @@ None
 None
 
 ---
-*Last updated: 2026-07-14T20:09:00*
+*Last updated: 2026-07-15T21:40:00*

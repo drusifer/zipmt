@@ -1,14 +1,13 @@
 # Next Steps
 
 ## Immediate Next Action
-- Wait for Cypher (@Cypher) to perform the final `*pm launch` for the Ratatui Migration Sprint.
+- Wait for future user requests or backlog specifications.
 
 ## Waiting On
-- Cypher (@Cypher) to review retrospective feedback and launch.
+- User requirements or additional features.
 
 ## Planned Work
-- [ ] Facilitate the sprint retrospective (`*sprint retro`) with the team.
-- [ ] Collaborate with Cypher and Morpheus to prepare the next sprint backlog.
+- Facilitate retrospectives and prepare the next sprint plan backlog.
 
 ---
-*Last updated: 2026-07-14T20:11:00*
+*Last updated: 2026-07-15T21:50:00*

@@ -1,13 +1,13 @@
 # Next Steps
 
 ## Immediate Next Action
-- Wait for Mouse's final close of the TUI Ratatui Migration sprint.
+- Hand off to Mouse (@Mouse) to perform sprint closing actions and velocity updates.
 
 ## Waiting On
-- Mouse (@Mouse) to close the sprint.
+- Mouse (@Mouse) for `*sm sprint close`.
 
 ## Planned Work
-- [ ] Receive sprint close notification.
+- Maintain mindmaps and index directories for the new decoupled library files.
 
 ---
-*Last updated: 2026-07-14T20:10:00*
+*Last updated: 2026-07-15T21:45:00*

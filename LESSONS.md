@@ -108,4 +108,36 @@ This document indexes critical lessons learned during the development, compilati
 - **The Solution:** Establish an in-memory, thread-safe global log queue (`OnceLock<Arc<Mutex<Vec<String>>>>`). Intercept internal verbose statements (`log_verbose!`) to populate this buffer when `TUI_ACTIVE` is enabled, and render the buffer as a scrollable paragraph in the layout.
 - **The Rule:** Capturing logs in a full-screen TUI requires storing log rows inside thread-safe memory and rendering them via custom scroll-offset bounds.
 
+---
+
+## 11. Lesson: Automated TTY Fallback Detection & Stream Safety
+- **Date:** 2026-07-15
+- > **Tags:** #CLI #TTY #IsTerminal #Fallback #Redirection
+- **Context:** Automatically defaulting to a TUI without checks risks piping raw visual terminal escape codes (e.g. cursor moves, clear screens) into target files or pipelines.
+- **The Issue:** Traditional CLI tools require manual flags (like `-T`) to toggles TUIs. If a user pipes output to a file and forgets to disable the TUI, the resulting file is corrupted with ANSI graphics.
+- **The Solution:** Automate this check in `main.rs` by checking `std::io::stdout().is_terminal()` and `std::io::stdin().is_terminal()`, alongside flags like `-c`/`--stdout` or stream state. If any indicate redirection, bypass TUI initialization completely.
+- **The Rule:** Any CLI application providing a full-screen TUI must automatically fallback to a silent/plain-text output mode when standard streams are piped or redirected, protecting integrity of user data.
+
+---
+
+## 12. Lesson: Unidirectional Channel-Based UI/Engine Decoupling
+- **Date:** 2026-07-15
+- > **Tags:** #Concurrency #Channel #Architecture #Testing
+- **Context:** Decoupling processing from UI rendering using channel progress events.
+- **The Issue:** Traditional concurrent programs share a mutable UI state struct across worker threads using arc-mutex wrappers, causing locks and thread contention.
+- **The Solution:** Restructure the compression pipeline to communicate with the UI main thread using a unidirectional `mpsc::channel`. The worker threads simply emit lightweight events (`ProgressEvent`) when updates occur. The TUI main thread periodically drains the channel and updates its local state.
+- **The Rule:** Unidirectional message passing channels provide a clean boundary for testing and prevent locking contention across worker threads.
+
+---
+
+## 13. Lesson: Mouse Coordinates click tracking in Text Terminals
+- **Date:** 2026-07-15
+- > **Tags:** #MouseCapture #Crossterm #TUI #Interaction
+- **Context:** Supporting mouse click/drag slider controls in a terminal TUI.
+- **The Issue:** Text terminals use row/col grid cell systems. Mapping mouse click coordinates requires accounting for centered widgets and offsets.
+- **The Solution:** Calculate the absolute centering offset based on terminal size, check if the clicked mouse event falls inside the bounding box of the vertical sliders, and map the row offset directly to the target scale.
+- **The Rule:** Capturing mouse interaction in a centered terminal dashboard requires checking if mouse events fall inside dynamic coordinate bounding boxes offset by padding.
+
+
+
 
