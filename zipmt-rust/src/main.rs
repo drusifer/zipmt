@@ -1,72 +1,21 @@
 #![deny(unsafe_code)]
 
-pub mod compressor;
-pub mod split_mode;
-pub mod stream_mode;
-pub mod tui;
-
-use std::fs::File;
-use std::io;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use clap::Parser;
-use compressor::{Compressor, GzipCompressor, Bzip2Compressor, XzCompressor, ZipError};
+use std::io::IsTerminal;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 
-// We use lazy_static to hold the output file path for cleanup on Ctrl-C.
-// Since we don't have lazy_static in Cargo.toml dependencies, let's add it first!
-// Wait! Let's check if we can write a clean once_cell or standard atomic instead of lazy_static to avoid too many dependencies.
-// Yes! A standard std::sync::OnceLock is available in Rust 1.70+ and completely standard!
-// OnceLock is perfect and doesn't require any external crate!
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering, AtomicU64, AtomicUsize};
-
-pub static VERBOSE: AtomicBool = AtomicBool::new(false);
-pub static TUI_ACTIVE: AtomicBool = AtomicBool::new(false);
-pub static THROTTLE_DELAY_MS: AtomicU64 = AtomicU64::new(0);
-pub static IS_PAUSED: AtomicBool = AtomicBool::new(false);
-pub static LOG_SCROLL_OFFSET: AtomicUsize = AtomicUsize::new(0);
-pub static COMPRESSION_LEVEL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(6);
-
-pub fn get_log_buffer() -> &'static Arc<Mutex<Vec<String>>> {
-    static LOG_BUFFER: OnceLock<Arc<Mutex<Vec<String>>>> = OnceLock::new();
-    LOG_BUFFER.get_or_init(|| Arc::new(Mutex::new(Vec::new())))
-}
-
-#[macro_export]
-macro_rules! log_verbose {
-    ($($arg:tt)*) => {
-        let msg = format!($($arg)*);
-        if $crate::TUI_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
-            if let Ok(mut buffer) = $crate::get_log_buffer().lock() {
-                buffer.push(msg.clone());
-                if buffer.len() > 100 {
-                    buffer.remove(0);
-                }
-            }
-        } else if $crate::VERBOSE.load(std::sync::atomic::Ordering::Relaxed) {
-            eprintln!("[INFO] {}", msg);
-        }
-    };
-}
-
-pub static OUTPUT_FILE_PATH: OnceLock<Arc<Mutex<Option<PathBuf>>>> = OnceLock::new();
-
-fn get_output_path_mutex() -> &'static Arc<Mutex<Option<PathBuf>>> {
-    OUTPUT_FILE_PATH.get_or_init(|| Arc::new(Mutex::new(None)))
-}
-
-pub fn cleanup_output_file() {
-    if let Some(mutex) = OUTPUT_FILE_PATH.get() {
-        if let Ok(guard) = mutex.lock() {
-            if let Some(ref path) = *guard {
-                let _ = std::fs::remove_file(path);
-            }
-        }
-    }
-}
+use zipmt_rust::compressor::{Bzip2Compressor, Compressor, GzipCompressor, XzCompressor, ZipError};
+use zipmt_rust::pipeline::{CompressionPipeline, InputSource, OutputDestination, ProgressEvent};
+use zipmt_rust::{TUI_ACTIVE, VERBOSE, get_output_path_mutex, log_verbose, tui};
 
 #[derive(Parser, Clone, Debug)]
-#[command(name = "zipmt-rust", version, about = "Parallel Multi-Format Compression Tool in Rust")]
+#[command(
+    name = "zipmt-rust",
+    version,
+    about = "Parallel Multi-Format Compression Tool in Rust"
+)]
 struct Args {
     /// Input file path. If omitted or "-", reads from stdin.
     #[arg(index = 1)]
@@ -100,15 +49,18 @@ struct Args {
     #[arg(short, long)]
     verbose: bool,
 
-    /// Display terminal progress UI.
-    #[arg(short = 'T', long, default_value_t = false)]
-    tui: bool,
-
     /// Compression level (1-9, defaults to 6).
     #[arg(short = 'l', long, default_value_t = 6)]
     level: u32,
-}
 
+    /// Run in interactive TUI mode.
+    #[arg(short = 'T', long)]
+    tui: bool,
+
+    /// Disable interactive TUI mode.
+    #[arg(long)]
+    no_tui: bool,
+}
 
 fn main() {
     if std::env::var("TEST_QUERY_SIZE").is_ok() {
@@ -118,14 +70,16 @@ fn main() {
     }
 
     let args = Args::parse();
-    COMPRESSION_LEVEL.store(args.level, Ordering::Relaxed);
 
     let compressor: Arc<Box<dyn Compressor + Send + Sync>> = Arc::new(match args.algo.as_str() {
         "gz" => Box::new(GzipCompressor { level: args.level }),
         "bz2" => Box::new(Bzip2Compressor { level: args.level }),
         "xz" => Box::new(XzCompressor { level: args.level }),
         other => {
-            eprintln!("Error: Unknown algorithm '{}'. Supported: xz, bz2, gz", other);
+            eprintln!(
+                "Error: Unknown algorithm '{}'. Supported: xz, bz2, gz",
+                other
+            );
             std::process::exit(1);
         }
     });
@@ -166,98 +120,6 @@ fn main() {
     }
 }
 
-fn run_compression(
-    args: Args,
-    compressor: Arc<Box<dyn Compressor + Send + Sync>>,
-    tui_state: Option<Arc<Mutex<tui::TuiState>>>,
-) -> Result<(), ZipError> {
-    let is_stdin = args.input_file.is_none() || args.input_file.as_deref() == Some("-");
-    let threads_count = args.threads.unwrap_or(0);
-
-    let run_res = if is_stdin {
-        log_verbose!("Running in Stream Mode (reading from standard input)...");
-        let mut stdin = io::stdin();
-
-        // Determine destination
-        if args.stdout || args.output.is_none() {
-            log_verbose!("Writing compressed stream to standard output");
-            let mut stdout = io::stdout();
-            stream_mode::compress_stream(&mut stdin, &mut stdout, compressor.as_ref().as_ref(), threads_count, tui_state.clone())
-        } else {
-            let out_path = PathBuf::from(args.output.as_ref().unwrap());
-            log_verbose!("Writing compressed stream to output file: {:?}", out_path);
-            // Register path for Ctrl-C cleanup
-            {
-                let mut guard = get_output_path_mutex().lock().unwrap();
-                *guard = Some(out_path.clone());
-            }
-
-            let mut out_file = File::create(&out_path)?;
-            stream_mode::compress_stream(&mut stdin, &mut out_file, compressor.as_ref().as_ref(), threads_count, tui_state.clone())
-        }
-    } else {
-        // Split mode / File compression
-        let input_path = PathBuf::from(args.input_file.as_ref().unwrap());
-        log_verbose!("Running in File Compression Mode for: {:?}", input_path);
-        if !input_path.exists() {
-            return Err(ZipError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("Input file not found: {:?}", input_path),
-            )));
-        }
-
-        // Determine output path
-        let out_path = if args.stdout {
-            log_verbose!("Output directed to standard output (--stdout / -c flag)");
-            None
-        } else if let Some(ref out) = args.output {
-            Some(PathBuf::from(out))
-        } else {
-            let ext = match args.algo.as_str() {
-                "gz" => "gz",
-                "bz2" => "bz2",
-                _ => "xz",
-            };
-            let mut p = input_path.clone();
-            let new_ext = match p.extension() {
-                Some(existing) => format!("{}.{}", existing.to_string_lossy(), ext),
-                None => ext.to_string(),
-            };
-            p.set_extension(new_ext);
-            Some(p)
-        };
-
-        if let Some(ref path) = out_path {
-            log_verbose!("Compression destination file: {:?}", path);
-            // Register for cleanup
-            {
-                let mut guard = get_output_path_mutex().lock().unwrap();
-                *guard = Some(path.clone());
-            }
-
-            let res = split_mode::compress_file(&input_path, path, compressor.as_ref().as_ref(), threads_count, tui_state.clone());
-
-            if res.is_ok() && args.delete {
-                log_verbose!("--delete option active. Removing source file: {:?}", input_path);
-                std::fs::remove_file(&input_path)?;
-            }
-            res
-        } else {
-            // Writing to stdout in split mode (requires streaming the output chunks)
-            let mut stdout = io::stdout();
-            let input_data = std::fs::read(&input_path)?;
-            let mut cursor = io::Cursor::new(input_data);
-            stream_mode::compress_stream(&mut cursor, &mut stdout, compressor.as_ref().as_ref(), threads_count, tui_state.clone())
-        }
-    };
-
-    if let Some(ref state) = tui_state {
-        state.lock().unwrap().is_complete = true;
-    }
-
-    run_res
-}
-
 fn run_app(args: Args, compressor: Arc<Box<dyn Compressor + Send + Sync>>) -> Result<(), ZipError> {
     VERBOSE.store(args.verbose, Ordering::Relaxed);
     log_verbose!("Starting zipmt-rust utility...");
@@ -267,10 +129,15 @@ fn run_app(args: Args, compressor: Arc<Box<dyn Compressor + Send + Sync>>) -> Re
     let threads_count = args.threads.unwrap_or(0);
 
     if args.test {
-        log_verbose!("Running in Verification/Integrity Test mode on input: {:?}", args.input_file);
+        log_verbose!(
+            "Running in Verification/Integrity Test mode on input: {:?}",
+            args.input_file
+        );
         // Verification mode
         if is_stdin {
-            return Err(ZipError::Verification("Cannot verify stream from standard input".into()));
+            return Err(ZipError::Verification(
+                "Cannot verify stream from standard input".into(),
+            ));
         }
         let input_path = Path::new(args.input_file.as_ref().unwrap());
         if !input_path.exists() {
@@ -287,16 +154,72 @@ fn run_app(args: Args, compressor: Arc<Box<dyn Compressor + Send + Sync>>) -> Re
         return Ok(());
     }
 
-    // Determine if TUI mode should run based on fallback checks and args.tui flag
+    // Determine if TUI mode should run based on TTY status, redirection checks, and CLI flags
+    let stdout_is_tty = std::io::stdout().is_terminal();
+    let stdin_is_tty = std::io::stdin().is_terminal();
+    let stdout_redirected = args.stdout || (args.output.is_none() && is_stdin);
+    let tui_possible = stdout_is_tty && stdin_is_tty && !stdout_redirected;
+
     let force_tui = std::env::var("ZIPMT_FORCE_TUI").is_ok();
-    let run_tui = args.tui || force_tui;
+    let run_tui = if force_tui {
+        true
+    } else if !tui_possible {
+        false
+    } else {
+        args.tui
+    };
 
+    // Determine input source and output destination
+    let input_source = if is_stdin {
+        InputSource::Stdin
+    } else {
+        InputSource::File(PathBuf::from(args.input_file.as_ref().unwrap()))
+    };
 
-    // Initialize TuiState if TUI mode is active
-    let tui_state = if run_tui {
+    let output_dest = if args.stdout {
+        OutputDestination::Stdout
+    } else if let Some(ref out) = args.output {
+        OutputDestination::File(PathBuf::from(out))
+    } else if is_stdin {
+        OutputDestination::Stdout
+    } else {
+        let ext = match args.algo.as_str() {
+            "gz" => "gz",
+            "bz2" => "bz2",
+            _ => "xz",
+        };
+        let mut p = PathBuf::from(args.input_file.as_ref().unwrap());
+        let new_ext = match p.extension() {
+            Some(existing) => format!("{}.{}", existing.to_string_lossy(), ext),
+            None => ext.to_string(),
+        };
+        p.set_extension(new_ext);
+        OutputDestination::File(p)
+    };
+
+    // Register path for Ctrl-C cleanup
+    if let OutputDestination::File(ref out_path) = output_dest {
+        let mut guard = get_output_path_mutex().lock().unwrap();
+        *guard = Some(out_path.clone());
+    }
+
+    // Setup the pipeline
+    let pipeline = CompressionPipeline::new(compressor, threads_count);
+    let (controller, rx, comp_handle) = pipeline.run(input_source, output_dest);
+
+    // Set initial compression level in the controller
+    controller.update_level(args.level);
+
+    let res = if run_tui {
         TUI_ACTIVE.store(true, Ordering::Relaxed);
         let state = if is_stdin {
-            let pool_size = if threads_count > 0 { threads_count } else { std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4) };
+            let pool_size = if threads_count > 0 {
+                threads_count
+            } else {
+                std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(4)
+            };
             Arc::new(Mutex::new(tui::TuiState::new_stream(
                 pool_size * 2,
                 0,
@@ -305,26 +228,52 @@ fn run_app(args: Args, compressor: Arc<Box<dyn Compressor + Send + Sync>>) -> Re
             )))
         } else {
             let input_path = Path::new(args.input_file.as_ref().unwrap());
-            let file_size = std::fs::metadata(input_path).map(|m| m.len() as usize).unwrap_or(0);
-            let chunks_count = if threads_count > 0 { threads_count } else { std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4) };
-            Arc::new(Mutex::new(tui::TuiState::new_split(chunks_count, file_size, args.level)))
+            let file_size = std::fs::metadata(input_path)
+                .map(|m| m.len() as usize)
+                .unwrap_or(0);
+            let chunks_count = if threads_count > 0 {
+                threads_count
+            } else {
+                std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(4)
+            };
+            Arc::new(Mutex::new(tui::TuiState::new_split(
+                chunks_count,
+                file_size,
+                args.level,
+            )))
         };
-        Some(state)
-    } else {
-        None
-    };
-
-    if let Some(state) = tui_state {
-        // Spawn compression thread
-        let state_clone = state.clone();
-        let args_clone = args.clone();
-        let comp_handle = std::thread::spawn(move || {
-            run_compression(args_clone, compressor, Some(state_clone))
-        });
 
         // Run TUI loop on main thread
-        tui::run_tui_on_main_thread(state, comp_handle)
+        tui::run_tui_on_main_thread(state, rx, controller, comp_handle)
     } else {
-        run_compression(args, compressor, None)
+        // Run raw mode (no TUI). We consume rx and then join the thread
+        while let Ok(event) = rx.recv() {
+            match event {
+                ProgressEvent::Error(err) => {
+                    return Err(err);
+                }
+                _ => {}
+            }
+        }
+        match comp_handle.join() {
+            Ok(res) => res,
+            Err(_) => Err(ZipError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Compression thread panicked",
+            ))),
+        }
+    };
+
+    if res.is_ok() && args.delete && !is_stdin {
+        let input_path = Path::new(args.input_file.as_ref().unwrap());
+        log_verbose!(
+            "--delete option active. Removing source file: {:?}",
+            input_path
+        );
+        std::fs::remove_file(input_path)?;
     }
+
+    res
 }

@@ -1,25 +1,24 @@
-# Task Board: zipmt-rust TUI Ratatui Migration Sprint
+# Task Board: zipmt-rust Decoupling & Interactive TUI Upgrade Sprint
 
-This is the single source of truth for the `zipmt-rust` TUI Ratatui Migration tasks.
+This is the single source of truth for the `zipmt-rust` Decoupling & Interactive TUI Upgrade tasks.
 
 ## 🎯 Sprint Goal
-Migrate the TUI from custom printed text formatting to the widget-based Ratatui library, integrating keyboard event polling directly into the main-thread event loop, and ensuring all snapshot/integration tests pass cleanly.
+Decouple the frontend interface from the compression pipeline using a channel-based progress event stream, implement a thread-safe library API controller for dynamic configuration adjustments, restore the `-T` flag with fallback safety, build an interactive LCARS dashboard with focusable vertical sliders (supporting keyboard navigation and mouse click/drag), and refactor tests to use mock snapshot rendering.
 
 ---
 
 ## 📅 Phase Breakdown
 
-### Phase 1: Dependencies & TUI Setup
-- [x] **Task 1.1 (Cargo):** Add `ratatui` dependency to `Cargo.toml`. (Assignee: Neo | UAT: Trin)
-- [x] **Task 1.2 (CLI & Fallbacks):** Remove `-T` / `--tui` CLI flag from `main.rs` and make TUI the default. Implement auto-redirection / fallback checks (disable TUI mode when output is piped or standard streams are not interactive TTYs). (Assignee: Neo | UAT: Trin)
-- [x] **Task 1.3 (Terminal Init):** Set up initialization of `stderr` alternate screen raw mode via Ratatui terminal. (Assignee: Neo | UAT: Trin)
+### Phase 1: Modular Pipeline & Decoupling (R1/R2)
+- [x] **Task 1.1 (Pipeline Abstraction):** Refactor compression pipeline to run independently and expose progress/metric streams. (Assignee: Neo | UAT: Trin)
+- [x] **Task 1.2 (Pipeline Controller):** Implement thread-safe `PipelineController` to dynamically alter parameters (level, delay) and handle pause/resume/abort. (Assignee: Neo | UAT: Trin)
+- [x] **Task 1.3 (CLI & Flag Restoration):** Restore `-T` / `--tui` CLI flag in main.rs, fallback to standard stream mode if not TTY or redirected. (Assignee: Neo | UAT: Trin)
 
-### Phase 2: Event Loop & Throttling
-- [x] **Task 2.1 (Main Event Loop):** Replace the background keyboard listener thread with crossterm main event loop polling at a tick rate of 100ms or 250ms. (Assignee: Neo | UAT: Trin)
-- [x] **Task 2.2 (Keyboard Handlers):** Implement keystroke event handlers inside the main event loop (`+`/`=`, `-`, `p`/`P`, `q`/`Esc`) updating atomic speed and pause variables, and handling immediate safe abort. (Assignee: Neo | UAT: Trin)
-- [x] **Task 2.3 (Worker Sync):** Coordinate thread safety between the background worker compression thread and the main loop. (Assignee: Neo | UAT: Trin)
+### Phase 2: Interactive Controls & Vertical Sliders (R4)
+- [x] **Task 2.1 (Vertical Sliders):** Render knobs (Throttle delay and Compression level) in vertical slider columns showing level values. (Assignee: Neo | UAT: Trin)
+- [x] **Task 2.2 (Keyboard Navigation):** Add Tab cycling with focus highlight and Up/Down/+/ - keys for active knob adjustments. (Assignee: Neo | UAT: Trin)
+- [x] **Task 2.3 (Mouse Interaction):** Track mouse click/drag events via Crossterm to adjust slider settings. (Assignee: Neo | UAT: Trin)
 
-### Phase 3: Widgets & Layout Snapshots
-- [x] **Task 3.1 (Ratatui Widgets):** Re-render LCARS widgets (System status, Split mode stripes, Stream mode capacity gauge, speed graph via canvas/columns, and control dashboard). (Assignee: Neo | UAT: Trin)
-- [x] **Task 3.2 (Snapshot Migration):** Migrate layout snapshot tests in `tui.rs` to use Ratatui `TestBackend`, ensuring full formatting and alignment verification. (Assignee: Neo | UAT: Trin)
-- [x] **Task 3.3 (UAT Sync):** Verify all unit, integration, and snapshot tests pass cleanly under `make test-rust`. (Assignee: Neo | UAT: Trin)
+### Phase 3: Verification & Snapshots (R5)
+- [x] **Task 3.1 (Decoupled Snapshot Tests):** Refactor tests to render TUI layouts using mock metrics on TestBackend. (Assignee: Neo | UAT: Trin)
+- [x] **Task 3.2 (UAT and Compilation Checks):** Verify compilation and pass `make test-rust` cleanly. (Assignee: Neo | UAT: Trin)

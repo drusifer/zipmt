@@ -1,0 +1,18 @@
+Parallel Multi-Format Compression Tool in Rust
+
+Usage: zipmt-rust [OPTIONS] [INPUT_FILE]
+
+Arguments:
+  [INPUT_FILE]  Input file path. If omitted or "-", reads from stdin
+
+Options:
+  -o, --output <OUTPUT>    Output file path. Defaults to <input_file>.<ext> or stdout
+  -a, --algo <ALGO>        Compression algorithm to use: xz, bz2, gz [default: xz]
+  -j, --threads <THREADS>  Number of worker threads (defaults to CPU core count)
+  -t, --test               Run integrity verification test on the input file
+  -d, --delete             Delete the source input file upon successful compression
+  -c, --stdout             Force writing output to stdout
+  -v, --verbose            Verbose output / metrics
+  -l, --level <LEVEL>      Compression level (1-9, defaults to 6) [default: 6]
+  -h, --help               Print help
+  -V, --version            Print version

@@ -1,16 +1,18 @@
 use std::io::Write;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crossterm::event::{self, Event, KeyCode};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
-use ratatui::backend::CrosstermBackend;
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
 use ratatui::Terminal;
-use ratatui::style::{Color, Style, Modifier};
+use ratatui::backend::CrosstermBackend;
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::layout::{Rect, Layout, Constraint, Direction};
-use ratatui::widgets::{Paragraph, Clear, Block, Borders, BorderType};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TuiMode {
@@ -30,6 +32,13 @@ pub struct WorkerState {
     pub id: usize,
     pub status: &'static str, // "IDLE", "BUSY", "HOLD"
     pub current_chunk: Option<u64>,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum FocusedWidget {
+    None,
+    CompressionLevelSlider,
+    ThrottleDelaySlider,
 }
 
 pub struct TuiState {
@@ -61,6 +70,11 @@ pub struct TuiState {
     pub level: u32,
     pub total_chunks_compressed: u64,
     pub total_compress_time_ms: f64,
+
+    // Decoupled focus and dynamic adjustment fields
+    pub focused_widget: FocusedWidget,
+    pub throttle_delay_ms: u64,
+    pub is_paused: bool,
 }
 
 impl TuiState {
@@ -96,10 +110,18 @@ impl TuiState {
             level,
             total_chunks_compressed: 0,
             total_compress_time_ms: 0.0,
+            focused_widget: FocusedWidget::None,
+            throttle_delay_ms: 0,
+            is_paused: false,
         }
     }
 
-    pub fn new_stream(queue_capacity: usize, total_input_size: usize, num_workers: usize, level: u32) -> Self {
+    pub fn new_stream(
+        queue_capacity: usize,
+        total_input_size: usize,
+        num_workers: usize,
+        level: u32,
+    ) -> Self {
         let mut workers = Vec::new();
         for id in 0..num_workers {
             workers.push(WorkerState {
@@ -130,6 +152,9 @@ impl TuiState {
             level,
             total_chunks_compressed: 0,
             total_compress_time_ms: 0.0,
+            focused_widget: FocusedWidget::None,
+            throttle_delay_ms: 0,
+            is_paused: false,
         }
     }
 
@@ -154,7 +179,12 @@ impl TerminalGuard {
     pub fn new() -> Result<Self, std::io::Error> {
         let _ = enable_raw_mode();
         let mut stderr = std::io::stderr();
-        let _ = crossterm::queue!(stderr, EnterAlternateScreen, crossterm::cursor::Hide);
+        let _ = crossterm::queue!(
+            stderr,
+            EnterAlternateScreen,
+            crossterm::cursor::Hide,
+            crossterm::event::EnableMouseCapture
+        );
         let _ = stderr.flush();
         let backend = CrosstermBackend::new(stderr);
         let terminal = Terminal::new(backend)?;
@@ -165,7 +195,12 @@ impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
         let mut stderr = std::io::stderr();
-        let _ = crossterm::queue!(stderr, crossterm::cursor::Show, LeaveAlternateScreen);
+        let _ = crossterm::queue!(
+            stderr,
+            crossterm::cursor::Show,
+            LeaveAlternateScreen,
+            crossterm::event::DisableMouseCapture
+        );
         let _ = stderr.flush();
     }
 }
@@ -188,7 +223,8 @@ pub fn query_initial_size() -> (u16, u16) {
                 let out_str = String::from_utf8_lossy(&output.stdout);
                 let parts: Vec<&str> = out_str.split_whitespace().collect();
                 if parts.len() == 2 {
-                    if let (Ok(rows), Ok(cols)) = (parts[0].parse::<u16>(), parts[1].parse::<u16>()) {
+                    if let (Ok(rows), Ok(cols)) = (parts[0].parse::<u16>(), parts[1].parse::<u16>())
+                    {
                         if cols > 0 && rows > 0 {
                             return (cols, rows);
                         }
@@ -212,9 +248,15 @@ pub fn query_initial_size() -> (u16, u16) {
                         .stdin(file_clone)
                         .output()
                     {
-                        let cols_str = String::from_utf8_lossy(&output_cols.stdout).trim().to_string();
-                        let lines_str = String::from_utf8_lossy(&output_lines.stdout).trim().to_string();
-                        if let (Ok(cols), Ok(rows)) = (cols_str.parse::<u16>(), lines_str.parse::<u16>()) {
+                        let cols_str = String::from_utf8_lossy(&output_cols.stdout)
+                            .trim()
+                            .to_string();
+                        let lines_str = String::from_utf8_lossy(&output_lines.stdout)
+                            .trim()
+                            .to_string();
+                        if let (Ok(cols), Ok(rows)) =
+                            (cols_str.parse::<u16>(), lines_str.parse::<u16>())
+                        {
                             if cols > 0 && rows > 0 {
                                 return (cols, rows);
                             }
@@ -230,6 +272,8 @@ pub fn query_initial_size() -> (u16, u16) {
 
 pub fn run_tui_on_main_thread(
     state: Arc<Mutex<TuiState>>,
+    rx: std::sync::mpsc::Receiver<crate::pipeline::ProgressEvent>,
+    controller: crate::pipeline::PipelineController,
     comp_handle: std::thread::JoinHandle<Result<(), crate::compressor::ZipError>>,
 ) -> Result<(), crate::compressor::ZipError> {
     let mut guard = TerminalGuard::new().map_err(crate::compressor::ZipError::Io)?;
@@ -241,63 +285,222 @@ pub fn run_tui_on_main_thread(
         guard_state.terminal_cols = w;
         guard_state.terminal_rows = h;
     }
-    
+
     let tick_rate = std::time::Duration::from_millis(100);
     loop {
+        // Read progress events
+        while let Ok(event) = rx.try_recv() {
+            let mut state_guard = state.lock().unwrap();
+            match event {
+                crate::pipeline::ProgressEvent::SplitProgress {
+                    stripe_id,
+                    bytes_processed,
+                    bytes_written,
+                    total_bytes,
+                } => {
+                    if stripe_id < state_guard.stripes.len() {
+                        state_guard.stripes[stripe_id].bytes_processed = bytes_processed;
+                        state_guard.stripes[stripe_id].bytes_written = bytes_written;
+                        state_guard.stripes[stripe_id].total_bytes = total_bytes;
+                    }
+                }
+                crate::pipeline::ProgressEvent::StreamProgress {
+                    bytes_read,
+                    bytes_written,
+                    queue_depth,
+                } => {
+                    state_guard.bytes_read = bytes_read;
+                    state_guard.bytes_written = bytes_written;
+                    state_guard.queue_depth = queue_depth;
+                }
+                crate::pipeline::ProgressEvent::WorkerStatus {
+                    worker_id,
+                    status,
+                    current_chunk,
+                } => {
+                    if worker_id < state_guard.workers.len() {
+                        state_guard.workers[worker_id].status = status;
+                        state_guard.workers[worker_id].current_chunk = current_chunk;
+                    }
+                }
+                crate::pipeline::ProgressEvent::AvgCompressionTime(duration) => {
+                    state_guard.update_chunk_time(duration);
+                }
+                crate::pipeline::ProgressEvent::Error(_) => {}
+                crate::pipeline::ProgressEvent::Complete => {
+                    state_guard.is_complete = true;
+                }
+            }
+        }
+
         // Listen for terminal events with a poll tick rate
         if event::poll(tick_rate).unwrap_or(false) {
             // Drain all pending events to keep event handling responsive and avoid queue lag
             while event::poll(std::time::Duration::from_millis(0)).unwrap_or(false) {
                 match event::read().unwrap() {
-                    Event::Key(key) => {
-                        match key.code {
-                            KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
-                                // Cleanup output file and exit utility cleanly
-                                crate::cleanup_output_file();
-                                drop(guard);
-                                std::process::exit(2);
-                            }
-                            KeyCode::Char('p') | KeyCode::Char('P') => {
-                                let current = crate::IS_PAUSED.load(Ordering::Relaxed);
-                                crate::IS_PAUSED.store(!current, Ordering::Relaxed);
-                            }
-                            KeyCode::Char('-') => {
-                                let current = crate::THROTTLE_DELAY_MS.load(Ordering::Relaxed);
-                                let new_val = std::cmp::min(current + 50, 500);
-                                crate::THROTTLE_DELAY_MS.store(new_val, Ordering::Relaxed);
-                            }
-                            KeyCode::Char('+') | KeyCode::Char('=') => {
-                                let current = crate::THROTTLE_DELAY_MS.load(Ordering::Relaxed);
-                                let new_val = current.saturating_sub(50);
-                                crate::THROTTLE_DELAY_MS.store(new_val, Ordering::Relaxed);
-                            }
-                            KeyCode::Char('[') => {
-                                let current = crate::COMPRESSION_LEVEL.load(Ordering::Relaxed);
-                                if current > 1 {
-                                    crate::COMPRESSION_LEVEL.store(current - 1, Ordering::Relaxed);
-                                }
-                            }
-                            KeyCode::Char(']') => {
-                                let current = crate::COMPRESSION_LEVEL.load(Ordering::Relaxed);
-                                if current < 9 {
-                                    crate::COMPRESSION_LEVEL.store(current + 1, Ordering::Relaxed);
-                                }
-                            }
-                            KeyCode::Up => {
-                                let offset = crate::LOG_SCROLL_OFFSET.load(Ordering::Relaxed);
-                                crate::LOG_SCROLL_OFFSET.store(offset.saturating_sub(1), Ordering::Relaxed);
-                            }
-                            KeyCode::Down => {
-                                let offset = crate::LOG_SCROLL_OFFSET.load(Ordering::Relaxed);
-                                crate::LOG_SCROLL_OFFSET.store(offset + 1, Ordering::Relaxed);
-                            }
-                            _ => {}
+                    Event::Key(key) => match key.code {
+                        KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
+                            controller.abort();
+                            crate::cleanup_output_file();
+                            drop(guard);
+                            std::process::exit(2);
                         }
-                    }
+                        KeyCode::Char('p') | KeyCode::Char('P') => {
+                            let current = controller.is_paused.load(Ordering::Relaxed);
+                            if current {
+                                controller.resume();
+                            } else {
+                                controller.pause();
+                            }
+                            let mut state_guard = state.lock().unwrap();
+                            state_guard.is_paused = !current;
+                        }
+                        KeyCode::Char('-') => {
+                            let current = controller.throttle_delay_ms.load(Ordering::Relaxed);
+                            let new_val = std::cmp::min(current + 50, 500);
+                            controller.update_throttle(new_val);
+                            let mut state_guard = state.lock().unwrap();
+                            state_guard.throttle_delay_ms = new_val;
+                        }
+                        KeyCode::Char('+') | KeyCode::Char('=') => {
+                            let current = controller.throttle_delay_ms.load(Ordering::Relaxed);
+                            let new_val = current.saturating_sub(50);
+                            controller.update_throttle(new_val);
+                            let mut state_guard = state.lock().unwrap();
+                            state_guard.throttle_delay_ms = new_val;
+                        }
+                        KeyCode::Char('[') => {
+                            let current = controller.compression_level.load(Ordering::Relaxed);
+                            if current > 1 {
+                                controller.update_level(current - 1);
+                                let mut state_guard = state.lock().unwrap();
+                                state_guard.level = current - 1;
+                            }
+                        }
+                        KeyCode::Char(']') => {
+                            let current = controller.compression_level.load(Ordering::Relaxed);
+                            if current < 9 {
+                                controller.update_level(current + 1);
+                                let mut state_guard = state.lock().unwrap();
+                                state_guard.level = current + 1;
+                            }
+                        }
+                        KeyCode::Tab => {
+                            let mut state_guard = state.lock().unwrap();
+                            state_guard.focused_widget = match state_guard.focused_widget {
+                                FocusedWidget::None => FocusedWidget::CompressionLevelSlider,
+                                FocusedWidget::CompressionLevelSlider => {
+                                    FocusedWidget::ThrottleDelaySlider
+                                }
+                                FocusedWidget::ThrottleDelaySlider => FocusedWidget::None,
+                            };
+                        }
+                        KeyCode::Up => {
+                            let mut state_guard = state.lock().unwrap();
+                            match state_guard.focused_widget {
+                                FocusedWidget::CompressionLevelSlider => {
+                                    let current =
+                                        controller.compression_level.load(Ordering::Relaxed);
+                                    if current < 9 {
+                                        controller.update_level(current + 1);
+                                        state_guard.level = current + 1;
+                                    }
+                                }
+                                FocusedWidget::ThrottleDelaySlider => {
+                                    let current =
+                                        controller.throttle_delay_ms.load(Ordering::Relaxed);
+                                    let new_val = std::cmp::min(current + 50, 500);
+                                    controller.update_throttle(new_val);
+                                    state_guard.throttle_delay_ms = new_val;
+                                }
+                                FocusedWidget::None => {
+                                    let offset = crate::LOG_SCROLL_OFFSET.load(Ordering::Relaxed);
+                                    crate::LOG_SCROLL_OFFSET
+                                        .store(offset.saturating_sub(1), Ordering::Relaxed);
+                                }
+                            }
+                        }
+                        KeyCode::Down => {
+                            let mut state_guard = state.lock().unwrap();
+                            match state_guard.focused_widget {
+                                FocusedWidget::CompressionLevelSlider => {
+                                    let current =
+                                        controller.compression_level.load(Ordering::Relaxed);
+                                    if current > 1 {
+                                        controller.update_level(current - 1);
+                                        state_guard.level = current - 1;
+                                    }
+                                }
+                                FocusedWidget::ThrottleDelaySlider => {
+                                    let current =
+                                        controller.throttle_delay_ms.load(Ordering::Relaxed);
+                                    let new_val = current.saturating_sub(50);
+                                    controller.update_throttle(new_val);
+                                    state_guard.throttle_delay_ms = new_val;
+                                }
+                                FocusedWidget::None => {
+                                    let offset = crate::LOG_SCROLL_OFFSET.load(Ordering::Relaxed);
+                                    crate::LOG_SCROLL_OFFSET.store(offset + 1, Ordering::Relaxed);
+                                }
+                            }
+                        }
+                        _ => {}
+                    },
                     Event::Resize(w, h) => {
                         let mut state_guard = state.lock().unwrap();
                         state_guard.terminal_cols = w;
                         state_guard.terminal_rows = h;
+                    }
+                    Event::Mouse(mouse_event) => {
+                        use crossterm::event::MouseEventKind;
+                        if mouse_event.kind
+                            == MouseEventKind::Down(crossterm::event::MouseButton::Left)
+                            || matches!(
+                                mouse_event.kind,
+                                MouseEventKind::Drag(crossterm::event::MouseButton::Left)
+                            )
+                        {
+                            let (w, h) = {
+                                let state_guard = state.lock().unwrap();
+                                (state_guard.terminal_cols, state_guard.terminal_rows)
+                            };
+                            if w >= 80 && h >= 22 {
+                                let pad_left = (w as usize).saturating_sub(80) / 2;
+                                let pad_top = (h as usize).saturating_sub(22) / 2;
+
+                                let col = mouse_event.column as usize;
+                                let row = mouse_event.row as usize;
+                                if row >= pad_top + 17 && row <= pad_top + 20 {
+                                    if col >= pad_left + 45 && col <= pad_left + 59 {
+                                        // Clicked Level Slider
+                                        let level = match row - (pad_top + 17) {
+                                            0 => 9,
+                                            1 => 6,
+                                            2 => 3,
+                                            _ => 1,
+                                        };
+                                        controller.update_level(level);
+                                        let mut state_guard = state.lock().unwrap();
+                                        state_guard.level = level;
+                                        state_guard.focused_widget =
+                                            FocusedWidget::CompressionLevelSlider;
+                                    } else if col >= pad_left + 60 && col <= pad_left + 75 {
+                                        // Clicked Delay Slider
+                                        let delay = match row - (pad_top + 17) {
+                                            0 => 500,
+                                            1 => 250,
+                                            2 => 100,
+                                            _ => 0,
+                                        };
+                                        controller.update_throttle(delay);
+                                        let mut state_guard = state.lock().unwrap();
+                                        state_guard.throttle_delay_ms = delay;
+                                        state_guard.focused_widget =
+                                            FocusedWidget::ThrottleDelaySlider;
+                                    }
+                                }
+                            }
+                        }
                     }
                     _ => {}
                 }
@@ -309,9 +512,15 @@ pub fn run_tui_on_main_thread(
 
             // Append current speed to history
             let now = Instant::now();
-            let duration = now.duration_since(state_guard.last_speed_update).as_secs_f64();
+            let duration = now
+                .duration_since(state_guard.last_speed_update)
+                .as_secs_f64();
             let total_in = match state_guard.mode {
-                TuiMode::Split => state_guard.stripes.iter().map(|s| s.bytes_processed).sum::<usize>(),
+                TuiMode::Split => state_guard
+                    .stripes
+                    .iter()
+                    .map(|s| s.bytes_processed)
+                    .sum::<usize>(),
                 TuiMode::Stream => state_guard.bytes_read,
             };
             let speed = if duration > 0.0 {
@@ -322,7 +531,6 @@ pub fn run_tui_on_main_thread(
             };
             state_guard.prev_total_in = total_in;
             state_guard.last_speed_update = now;
-            state_guard.level = crate::COMPRESSION_LEVEL.load(Ordering::Relaxed);
 
             state_guard.speed_history.push(speed);
             if state_guard.speed_history.len() > 35 {
@@ -338,6 +546,50 @@ pub fn run_tui_on_main_thread(
         }
 
         if comp_handle.is_finished() {
+            // Also drain any leftover events
+            while let Ok(event) = rx.try_recv() {
+                let mut state_guard = state.lock().unwrap();
+                match event {
+                    crate::pipeline::ProgressEvent::SplitProgress {
+                        stripe_id,
+                        bytes_processed,
+                        bytes_written,
+                        total_bytes,
+                    } => {
+                        if stripe_id < state_guard.stripes.len() {
+                            state_guard.stripes[stripe_id].bytes_processed = bytes_processed;
+                            state_guard.stripes[stripe_id].bytes_written = bytes_written;
+                            state_guard.stripes[stripe_id].total_bytes = total_bytes;
+                        }
+                    }
+                    crate::pipeline::ProgressEvent::StreamProgress {
+                        bytes_read,
+                        bytes_written,
+                        queue_depth,
+                    } => {
+                        state_guard.bytes_read = bytes_read;
+                        state_guard.bytes_written = bytes_written;
+                        state_guard.queue_depth = queue_depth;
+                    }
+                    crate::pipeline::ProgressEvent::WorkerStatus {
+                        worker_id,
+                        status,
+                        current_chunk,
+                    } => {
+                        if worker_id < state_guard.workers.len() {
+                            state_guard.workers[worker_id].status = status;
+                            state_guard.workers[worker_id].current_chunk = current_chunk;
+                        }
+                    }
+                    crate::pipeline::ProgressEvent::AvgCompressionTime(duration) => {
+                        state_guard.update_chunk_time(duration);
+                    }
+                    crate::pipeline::ProgressEvent::Error(_) => {}
+                    crate::pipeline::ProgressEvent::Complete => {
+                        state_guard.is_complete = true;
+                    }
+                }
+            }
             break;
         }
     }
@@ -372,10 +624,7 @@ fn render_history_chart(history: &[f64], height: usize, data_width: usize) -> Ve
             "  0.0K ┼".to_string(),
         )
     } else {
-        (
-            format!("{:5.0}B ┼", max_val),
-            "    0B ┼".to_string(),
-        )
+        (format!("{:5.0}B ┼", max_val), "    0B ┼".to_string())
     };
     let mid_label = "       │".to_string();
 
@@ -400,7 +649,7 @@ fn render_history_chart(history: &[f64], height: usize, data_width: usize) -> Ve
                 let pct = val / scale;
                 let val_height = pct * height as f64;
                 let threshold = (height - 1 - r) as f64;
-                
+
                 let diff = val_height - threshold;
                 let ch = if diff >= 1.0 {
                     '█'
@@ -448,14 +697,13 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
     let style_cyan = Style::default().fg(Color::Indexed(117));
     let style_yellow = Style::default().fg(Color::Indexed(220));
 
-    let pause_status = if crate::IS_PAUSED.load(Ordering::Relaxed) {
+    let pause_status = if state.is_paused {
         "PAUSED"
     } else if state.is_complete {
         "COMPLETE"
     } else {
         "RUNNING"
     };
-    let throttle_delay = crate::THROTTLE_DELAY_MS.load(Ordering::Relaxed);
 
     terminal.draw(|f| {
         let area = f.size();
@@ -467,9 +715,18 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
 
         if cols < 80 || rows < 22 {
             let warning_lines = vec![
-                Line::from(Span::styled("Terminal size too small.", Style::default().fg(Color::Red))),
-                Line::from(Span::styled(format!("Current: {}x{}", cols, rows), Style::default().fg(Color::Red))),
-                Line::from(Span::styled("Please resize to at least 80x22.", Style::default().fg(Color::Yellow))),
+                Line::from(Span::styled(
+                    "Terminal size too small.",
+                    Style::default().fg(Color::Red),
+                )),
+                Line::from(Span::styled(
+                    format!("Current: {}x{}", cols, rows),
+                    Style::default().fg(Color::Red),
+                )),
+                Line::from(Span::styled(
+                    "Please resize to at least 80x22.",
+                    Style::default().fg(Color::Yellow),
+                )),
             ];
             let paragraph = Paragraph::new(warning_lines);
             f.render_widget(paragraph, area);
@@ -479,21 +736,16 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
         let pad_left = (cols as usize).saturating_sub(80) / 2;
         let pad_top = (rows as usize).saturating_sub(22) / 2;
 
-        let rect = Rect::new(
-            pad_left as u16,
-            pad_top as u16,
-            80,
-            22,
-        );
+        let rect = Rect::new(pad_left as u16, pad_top as u16, 80, 22);
 
         // Nested Grid Layout
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(1),  // Title Row
-                Constraint::Length(12), // Body panels (Left: Status / Right: Speed Chart)
-                Constraint::Length(6),  // Logs (5 total height, 4 logs inner)
-                Constraint::Length(3),  // Footer Controls
+                Constraint::Length(10), // Body panels (Left: Status / Right: Speed Chart)
+                Constraint::Length(5),  // Logs (5 total height, 3 logs inner)
+                Constraint::Length(6),  // Footer Controls
             ])
             .split(rect);
 
@@ -504,9 +756,19 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
             _ => Color::Indexed(117), // Cyan-blue
         };
         let title_line = Line::from(vec![
-            Span::styled("ZIPMT PIPELINE CONTROLLER ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "ZIPMT PIPELINE CONTROLLER ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("═".repeat(38), style_orange),
-            Span::styled(format!(" [STATUS: {}]", pause_status), Style::default().fg(status_color).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!(" [STATUS: {}]", pause_status),
+                Style::default()
+                    .fg(status_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]);
         f.render_widget(Paragraph::new(title_line), chunks[0]);
 
@@ -524,14 +786,24 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(style_orange)
-            .title(Span::styled(" Transporter Status ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+            .title(Span::styled(
+                " Transporter Status ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
 
         // Right Panel Block
         let right_block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(style_orange)
-            .title(Span::styled(" Ingest Speed History ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+            .title(Span::styled(
+                " Ingest Speed History ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
 
         // Render Left Panel Content
         match state.mode {
@@ -540,21 +812,29 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
                 for stripe in &state.stripes {
                     let total = stripe.total_bytes;
                     let processed = stripe.bytes_processed;
-                    let pct = if total > 0 { (processed * 100) / total } else { 0 };
-                    
+                    let pct = if total > 0 {
+                        (processed * 100) / total
+                    } else {
+                        0
+                    };
+
                     let ratio = if stripe.bytes_written > 0 {
                         processed as f64 / stripe.bytes_written as f64
                     } else {
                         1.0
                     };
-                    
+
                     let bar_len = 15;
-                    let filled = if total > 0 { std::cmp::min((processed * bar_len) / total, bar_len) } else { 0 };
+                    let filled = if total > 0 {
+                        std::cmp::min((processed * bar_len) / total, bar_len)
+                    } else {
+                        0
+                    };
                     let bar: String = std::iter::repeat('█')
                         .take(filled)
                         .chain(std::iter::repeat('░').take(bar_len - filled))
                         .collect();
-                        
+
                     lines.push(Line::from(vec![
                         Span::styled(format!("Sec {:02}: ", stripe.id), style_purple),
                         Span::styled(format!("[{}] ", bar), style_cyan),
@@ -583,14 +863,20 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
                 let mut lines = Vec::new();
                 lines.push(Line::from(vec![
                     Span::styled("Ingested : ", style_purple),
-                    Span::styled(format!("{:7.2}", state.bytes_read as f64 / (1024.0 * 1024.0)), style_cyan),
+                    Span::styled(
+                        format!("{:7.2}", state.bytes_read as f64 / (1024.0 * 1024.0)),
+                        style_cyan,
+                    ),
                     Span::styled(" MB / ", style_purple),
                     Span::styled(format!("{:5.1}", speed_in / (1024.0 * 1024.0)), style_cyan),
                     Span::styled(" MB/s", style_purple),
                 ]));
                 lines.push(Line::from(vec![
                     Span::styled("Output   : ", style_purple),
-                    Span::styled(format!("{:7.2}", state.bytes_written as f64 / (1024.0 * 1024.0)), style_cyan),
+                    Span::styled(
+                        format!("{:7.2}", state.bytes_written as f64 / (1024.0 * 1024.0)),
+                        style_cyan,
+                    ),
                     Span::styled(" MB (", style_purple),
                     Span::styled(format!("{:.2}x", ratio), style_yellow),
                     Span::styled(" Ratio)", style_purple),
@@ -618,34 +904,69 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
                 lines.push(Line::from(vec![
                     Span::styled("Queue: ", style_purple),
                     Span::styled(queue_list, style_cyan),
-                    Span::styled(format!(" ({}/{} blk)", state.queue_depth, state.queue_capacity), style_yellow),
+                    Span::styled(
+                        format!(" ({}/{} blk)", state.queue_depth, state.queue_capacity),
+                        style_yellow,
+                    ),
                 ]));
 
                 let mut w_parts_1 = Vec::new();
                 if state.workers.len() > 0 {
                     let w = &state.workers[0];
-                    w_parts_1.push(Span::styled(format!("W00:[{:<4}] ", w.status), style_purple));
-                    w_parts_1.push(Span::styled(w.current_chunk.map(|c| format!("#{:<3}", c)).unwrap_or_else(|| "-- ".to_string()), style_cyan));
+                    w_parts_1.push(Span::styled(
+                        format!("W00:[{:<4}] ", w.status),
+                        style_purple,
+                    ));
+                    w_parts_1.push(Span::styled(
+                        w.current_chunk
+                            .map(|c| format!("#{:<3}", c))
+                            .unwrap_or_else(|| "-- ".to_string()),
+                        style_cyan,
+                    ));
                 }
                 if state.workers.len() > 1 {
                     w_parts_1.push(Span::styled("   ", style_purple));
                     let w = &state.workers[1];
-                    w_parts_1.push(Span::styled(format!("W01:[{:<4}] ", w.status), style_purple));
-                    w_parts_1.push(Span::styled(w.current_chunk.map(|c| format!("#{:<3}", c)).unwrap_or_else(|| "-- ".to_string()), style_cyan));
+                    w_parts_1.push(Span::styled(
+                        format!("W01:[{:<4}] ", w.status),
+                        style_purple,
+                    ));
+                    w_parts_1.push(Span::styled(
+                        w.current_chunk
+                            .map(|c| format!("#{:<3}", c))
+                            .unwrap_or_else(|| "-- ".to_string()),
+                        style_cyan,
+                    ));
                 }
                 lines.push(Line::from(w_parts_1));
 
                 let mut w_parts_2 = Vec::new();
                 if state.workers.len() > 2 {
                     let w = &state.workers[2];
-                    w_parts_2.push(Span::styled(format!("W02:[{:<4}] ", w.status), style_purple));
-                    w_parts_2.push(Span::styled(w.current_chunk.map(|c| format!("#{:<3}", c)).unwrap_or_else(|| "-- ".to_string()), style_cyan));
+                    w_parts_2.push(Span::styled(
+                        format!("W02:[{:<4}] ", w.status),
+                        style_purple,
+                    ));
+                    w_parts_2.push(Span::styled(
+                        w.current_chunk
+                            .map(|c| format!("#{:<3}", c))
+                            .unwrap_or_else(|| "-- ".to_string()),
+                        style_cyan,
+                    ));
                 }
                 if state.workers.len() > 3 {
                     w_parts_2.push(Span::styled("   ", style_purple));
                     let w = &state.workers[3];
-                    w_parts_2.push(Span::styled(format!("W03:[{:<4}] ", w.status), style_purple));
-                    w_parts_2.push(Span::styled(w.current_chunk.map(|c| format!("#{:<3}", c)).unwrap_or_else(|| "-- ".to_string()), style_cyan));
+                    w_parts_2.push(Span::styled(
+                        format!("W03:[{:<4}] ", w.status),
+                        style_purple,
+                    ));
+                    w_parts_2.push(Span::styled(
+                        w.current_chunk
+                            .map(|c| format!("#{:<3}", c))
+                            .unwrap_or_else(|| "-- ".to_string()),
+                        style_cyan,
+                    ));
                 }
                 lines.push(Line::from(w_parts_2));
 
@@ -670,10 +991,15 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
                 lines.push(Line::from(vec![
                     Span::styled("Out Q: ", style_purple),
                     Span::styled(out_queue_list, style_cyan),
-                    Span::styled(format!(" (Next: #{})", state.next_expected_seq), style_yellow),
+                    Span::styled(
+                        format!(" (Next: #{})", state.next_expected_seq),
+                        style_yellow,
+                    ),
                 ]));
 
-                let gap_str = if !state.output_buffer.is_empty() && state.output_buffer[0] > state.next_expected_seq {
+                let gap_str = if !state.output_buffer.is_empty()
+                    && state.output_buffer[0] > state.next_expected_seq
+                {
                     format!("GAP AT #{}", state.next_expected_seq)
                 } else {
                     "NO GAPS".to_string()
@@ -707,8 +1033,12 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
         // Render Right Panel Content (Speed Chart)
         let chart_lines = render_history_chart(&state.speed_history, 10, 29);
         let chart_paragraph = Paragraph::new(
-            chart_lines.into_iter().map(|l| Line::from(Span::styled(l, style_yellow))).collect::<Vec<_>>()
-        ).block(right_block);
+            chart_lines
+                .into_iter()
+                .map(|l| Line::from(Span::styled(l, style_yellow)))
+                .collect::<Vec<_>>(),
+        )
+        .block(right_block);
         f.render_widget(chart_paragraph, body_chunks[1]);
 
         // --- 3. Logs Section ---
@@ -750,7 +1080,12 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(style_orange)
-            .title(Span::styled(logs_title, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+            .title(Span::styled(
+                logs_title,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
 
         let logs = if let Ok(buffer) = crate::get_log_buffer().lock() {
             buffer.clone()
@@ -759,12 +1094,13 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
         };
 
         let scroll_offset = crate::LOG_SCROLL_OFFSET.load(Ordering::Relaxed);
-        let max_offset = logs.len().saturating_sub(4); // 4 rows inner height
+        let logs_inner_height = chunks[2].height.saturating_sub(2) as usize;
+        let max_offset = logs.len().saturating_sub(logs_inner_height);
         let offset = std::cmp::min(scroll_offset, max_offset);
         crate::LOG_SCROLL_OFFSET.store(offset, Ordering::Relaxed);
 
         let mut log_lines = Vec::new();
-        for r in 0..4 {
+        for r in 0..logs_inner_height {
             if offset + r < logs.len() {
                 let line_str = &logs[offset + r];
                 let truncated = if line_str.len() > 76 {
@@ -779,26 +1115,145 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
         }
         f.render_widget(Paragraph::new(log_lines).block(logs_block), chunks[2]);
 
-        // --- 4. Footer Controls ---
+        // --- 4. Footer Controls / Vertical Sliders ---
         let footer_block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(style_orange)
-            .title(Span::styled(" Pipeline Controls ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+            .title(Span::styled(
+                " Pipeline Controls ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
 
-        let filled_slider = ((throttle_delay as f64 / 500.0) * 8.0).round() as usize;
-        let slider_bar: String = std::iter::repeat('█').take(filled_slider)
-            .chain(std::iter::repeat('░').take(8 - filled_slider))
-            .collect();
+        let footer_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(45), // Left side for key guides/info
+                Constraint::Length(15), // Compression Level Slider column
+                Constraint::Length(16), // Throttle Delay Slider column
+                Constraint::Length(4),  // Spacer
+            ])
+            .split(chunks[3]);
 
-        let left_footer = Span::styled("CTRL: [P]Pause [-/+]Slow/Speed [[]/[]]Lvl-/+ [Q]Abort", style_purple);
-        let right_footer = format!("  Throt:[{}] {:3}ms", slider_bar, throttle_delay);
+        // Left side paragraph
+        let key_guides = vec![
+            Line::from(Span::styled(
+                "CTRL: [P]Pause  [-/+]Slow/Speed",
+                style_purple,
+            )),
+            Line::from(Span::styled(
+                "      [[]/[]]Lvl-/+  [Q]Abort/Exit",
+                style_purple,
+            )),
+            Line::from(Span::styled(
+                "      [Tab]Cycle Focus Arrow Up/Down",
+                style_purple,
+            )),
+            Line::from(Span::styled(
+                "      Click/Drag to adjust sliders",
+                style_purple,
+            )),
+        ];
+        f.render_widget(
+            Paragraph::new(key_guides).block(footer_block),
+            footer_chunks[0],
+        );
 
-        let footer_line = Line::from(vec![
-            left_footer,
-            Span::styled(right_footer, style_yellow),
-        ]);
-        f.render_widget(Paragraph::new(footer_line).block(footer_block), chunks[3]);
+        // Level Slider block
+        let level_focused = state.focused_widget == FocusedWidget::CompressionLevelSlider;
+        let level_border_style = if level_focused {
+            style_yellow
+        } else {
+            style_purple
+        };
+        let level_title = if level_focused {
+            "[ Level ]"
+        } else {
+            " Level "
+        };
+        let level_block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(level_border_style)
+            .title(Span::styled(
+                level_title,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
+
+        let level_val = state.level;
+        let lvl_bar_1 = if level_val >= 7 { "█" } else { "░" };
+        let lvl_bar_2 = if level_val >= 4 { "█" } else { "░" };
+        let lvl_bar_3 = if level_val >= 1 { "█" } else { "░" };
+
+        let level_lines = vec![
+            Line::from(vec![
+                Span::styled("  9 ┼ ", style_purple),
+                Span::styled(lvl_bar_1, style_cyan),
+            ]),
+            Line::from(vec![
+                Span::styled(format!("  {} ┼ ", level_val), style_yellow),
+                Span::styled(lvl_bar_2, style_cyan),
+            ]),
+            Line::from(vec![
+                Span::styled("  1 ┴ ", style_purple),
+                Span::styled(lvl_bar_3, style_cyan),
+            ]),
+        ];
+        f.render_widget(
+            Paragraph::new(level_lines).block(level_block),
+            footer_chunks[1],
+        );
+
+        // Delay Slider block
+        let delay_focused = state.focused_widget == FocusedWidget::ThrottleDelaySlider;
+        let delay_border_style = if delay_focused {
+            style_yellow
+        } else {
+            style_purple
+        };
+        let delay_title = if delay_focused {
+            "[ Throttle ]"
+        } else {
+            " Throttle "
+        };
+        let delay_block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(delay_border_style)
+            .title(Span::styled(
+                delay_title,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
+
+        let delay_val = state.throttle_delay_ms;
+        let dly_bar_1 = if delay_val >= 400 { "█" } else { "░" };
+        let dly_bar_2 = if delay_val >= 200 { "█" } else { "░" };
+        let dly_bar_3 = if delay_val >= 50 { "█" } else { "░" };
+
+        let delay_lines = vec![
+            Line::from(vec![
+                Span::styled(" 500 ┼ ", style_purple),
+                Span::styled(dly_bar_1, style_cyan),
+            ]),
+            Line::from(vec![
+                Span::styled(format!(" {:3} ┼ ", delay_val), style_yellow),
+                Span::styled(dly_bar_2, style_cyan),
+            ]),
+            Line::from(vec![
+                Span::styled("   0 ┴ ", style_purple),
+                Span::styled(dly_bar_3, style_cyan),
+            ]),
+        ];
+        f.render_widget(
+            Paragraph::new(delay_lines).block(delay_block),
+            footer_chunks[2],
+        );
     })?;
 
     Ok(())
@@ -807,8 +1262,8 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
     fn get_buffer_string(backend: &TestBackend) -> String {
         let buffer = backend.buffer();
@@ -828,7 +1283,7 @@ mod tests {
     #[test]
     fn test_tui_layout_split_mode_snapshot() {
         let mut state = TuiState::new_split(4, 400 * 1024, 6);
-        
+
         state.stripes[0].total_bytes = 102400;
         state.stripes[0].bytes_processed = 102400;
         state.stripes[0].bytes_written = 40960;
@@ -901,7 +1356,7 @@ mod tests {
     #[test]
     fn test_query_initial_size_matches_stty() {
         let (cols, rows) = query_initial_size();
-        
+
         let file = std::fs::File::open("/dev/tty").expect("Unable to open /dev/tty");
         let output = std::process::Command::new("stty")
             .arg("size")
@@ -911,7 +1366,9 @@ mod tests {
         let out_str = String::from_utf8_lossy(&output.stdout);
         let parts: Vec<&str> = out_str.split_whitespace().collect();
         if parts.len() == 2 {
-            if let (Ok(expected_rows), Ok(expected_cols)) = (parts[0].parse::<u16>(), parts[1].parse::<u16>()) {
+            if let (Ok(expected_rows), Ok(expected_cols)) =
+                (parts[0].parse::<u16>(), parts[1].parse::<u16>())
+            {
                 assert_eq!(cols, expected_cols, "cols must match stty cols");
                 assert_eq!(rows, expected_rows, "rows must match stty rows");
             }
@@ -924,7 +1381,7 @@ mod tests {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         draw_tui(&mut terminal, &state).unwrap();
-        
+
         let buffer = terminal.backend().buffer();
         let mut row_3_str = String::new();
         for x in 0..80 {
@@ -969,9 +1426,13 @@ mod tests {
             let mut terminal = Terminal::new(backend).unwrap();
             draw_tui(&mut terminal, &state).unwrap();
             let clean_output = get_buffer_string(terminal.backend());
-            
+
             for line in clean_output.lines() {
-                if line.starts_with('┌') || line.starts_with('│') || line.starts_with('├') || line.starts_with('╰') {
+                if line.starts_with('┌')
+                    || line.starts_with('│')
+                    || line.starts_with('├')
+                    || line.starts_with('╰')
+                {
                     assert_eq!(
                         line.chars().count(),
                         80,
@@ -991,9 +1452,13 @@ mod tests {
             let mut terminal = Terminal::new(backend).unwrap();
             draw_tui(&mut terminal, &state).unwrap();
             let clean_output = get_buffer_string(terminal.backend());
-            
+
             for line in clean_output.lines() {
-                if line.starts_with('┌') || line.starts_with('│') || line.starts_with('├') || line.starts_with('╰') {
+                if line.starts_with('┌')
+                    || line.starts_with('│')
+                    || line.starts_with('├')
+                    || line.starts_with('╰')
+                {
                     assert_eq!(
                         line.chars().count(),
                         80,
