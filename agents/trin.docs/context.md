@@ -3,6 +3,7 @@
 This file tracks the current state of test findings, patterns, and verification metrics for the QA Guardian (Trin).
 
 ## Recent Decisions
+- **Active-session Judge review (2026-07-18)**: Tracegate extracted 812 calls and 9 raw flags. Manual review confirmed only one Via bypass; five Make-bypass and two Make-pipe flags were false positives, and one Via flag was also false. Active-session date discovery and Codex skill-load detection are open evaluator defects.
 - **Rust quality gates established (2026-07-18)**: Make now owns formatter, strict Clippy, cognitive and cyclomatic complexity, dead-code, RustSec/cargo-deny, cargo-geiger, Miri, Valgrind, flamegraph, and bloat workflows. Initial baseline: format/dead-code and audit pass; 22 strict Clippy findings; three paths exceed cognitive threshold 20. Project license is MIT.
 - **Graph/worker UAT passed (2026-07-17)**: Verified one-second bucket gating, ten-bucket labels, worker progress reduction/rendering, one-based identity, overflow, 39 unit tests, and 7 integration tests.
 - **Slice observability UAT passed (2026-07-17)**: Verified stable ETA, frozen slice averages, CPU/RSS parsers/panels, responsive widget capacity, 37 unit tests, and 7 integration tests.
@@ -22,4 +23,4 @@ This file tracks the current state of test findings, patterns, and verification 
 - **Passed Phase 1 Ratatui Migration UAT Gate**: Verified TUI runs by default on normal compression, and auto-fallback disables TUI correctly when outputs/inputs are not interactive TTYs or redirected to stdout.
 
 ---
-*Last updated: 2026-07-18T12:27:00-04:00*
+*Last updated: 2026-07-18T18:33:00-04:00*

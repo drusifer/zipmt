@@ -1583,3 +1583,71 @@ Check IO/CPU overload!
 ---
 [<small>2026-07-18 18:12:20</small>] [**Neo**]->[**Trin**] *handoff*:
  Added matching native Stream profiling. Stream: 1,597 samples, 4 lost chunks; same four liblzma symbols consume 87.90% self CPU. Queueing/direct chunk encode/ordered output are not material hotspots. Separate Split/Stream flamegraphs and reports are in build/; both outputs pass xz integrity.
+
+---
+[<small>2026-07-18 18:20:06</small>] [**drusifer**]->[**all**] *chat*:
+ @Bob *init Judge Codex trace support: replacing Claude-only trace ingestion with Codex rollout auto-detection and preserving fallback.
+
+---
+[<small>2026-07-18 18:26:58</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make judge-trace | /home/drusifer/Projects/zipmt/build/build.out
+Written: /tmp/judge-tracegate.md
+805 tool calls · 9 flags · 1 sessions
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-18 18:27:43</small>] [**Bob**]->[**Trin**] *prompt update*:
+ Judge now uses pinned Tracegate 0.1.6 for Claude/Codex normalization, with a thin adapter for Codex code-mode tools. Four focused tests pass and a real Codex rollout produced 805 calls/9 flags. @Trin *qa verify judge traces
+
+---
+[<small>2026-07-18 18:31:17</small>] [**User**]->[**Trin**] *judge request*:
+ @Trin *qa judge tool and skill use for the active Codex session. Compile Tracegate-backed ground truth, manually review every heuristic flag, then hand off to Smith for TES scoring.
+
+---
+[<small>2026-07-18 18:31:17</small>] [**Trin**]->[**all**] *qa init*:
+ Trin initialized for active-session Judge review; persisted QA context loaded and Tracegate environment is available.
+
+---
+[<small>2026-07-18 18:31:25</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make judge-trace | /home/drusifer/Projects/zipmt/build/build.out
+Written: /tmp/judge-current-session.md
+812 tool calls · 9 flags · 1 sessions
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-18 18:32:47</small>] [**Trin**]->[**Smith**] *qa handoff*:
+ Full active rollout reviewed from its July 16 start: 812 calls, 9 raw flags, 1 confirmed violation. Evidence saved in judge_tool_skill_session_trace.md. @Smith *user feedback judge tool and skill use
+
+---
+[<small>2026-07-18 18:33:01</small>] [**Smith**]->[**all**] *user feedback init*:
+ Smith initialized and reviewed the complete active rollout from event 1.
+
+---
+[<small>2026-07-18 18:33:01</small>] [**Smith**]->[**Neo**] *user feedback*:
+ TES 82/100. One confirmed Via bypass; evaluator defects cataloged for active/latest discovery, Codex Skill derivation, and shell-rule false positives. @Neo *swe fix judge tool and skill use
+
+---
+[<small>2026-07-18 18:34:31</small>] [**Neo**]->[**all**] *swe fix init*:
+ Neo initialized to fix Judge shell-rule false positives from the full-session review. Scope is executable-segment parsing plus regression tests; no unrelated trace changes.
+
+---
+[<small>2026-07-18 18:35:06</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make judge-trace | /home/drusifer/Projects/zipmt/build/build.out
+Written: /tmp/judge-fp-fixed.md
+822 tool calls · 1 flags · 1 sessions
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-18 18:35:31</small>] [**Neo**]->[**Trin**] *swe handoff*:
+ Fixed Judge shell classification: quoted chat text is ignored, || is distinct from |, and Via scans stay within each rg/grep segment. Tests pass 10/10; full session now reports exactly the one confirmed violation. @Trin *qa verify judge false positives
+
+---
+[<small>2026-07-18 18:43:28</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make judge-trace | /home/drusifer/Projects/zipmt/build/build.out
+Written: /tmp/judge-efficiency-final.md
+836 tool calls · 2 flags · 1 sessions
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-18 18:43:51</small>] [**Neo**]->[**Trin**] *swe handoff*:
+ Judge now applies an MLflow-style deterministic efficiency rubric: duplicate tools, unchanged retries, unchanged retests, search loops, and duplicate reads, with polling exemptions. Tests pass 16/16; full session finds one real unchanged retest. @Trin *qa verify judge efficiency

@@ -3,6 +3,8 @@
 This file tracks the current state of code implementations and tech stacks maintained by the Software Engineer (Neo).
 
 ## Recent Decisions
+- **MLflow-style Judge efficiency rubric (2026-07-18)**: Judge deterministically flags exact duplicate tools, unchanged immediate retries, tests repeated without edits, repeated searches without scope/edit changes, and existing duplicate reads. Stateful polling tools are exempt. Reports emit a YES/NO efficiency verdict and specific findings.
+- **Judge shell classification fix (2026-07-18)**: Quote-aware shell segmentation now evaluates only executable positions, distinguishes `|` from `||`, and confines Via heuristics to each `rg`/`grep` segment. Full-session flags fell from 9 to the single confirmed Via violation.
 - **Unified chunk-buffer reuse (2026-07-18)**: Stream transfers its reader allocation without cloning and feeds the chunk directly to encoders. Split workers reuse one heap chunk, replacing it only at atomic Chunk-size read boundaries; encoder output still writes directly to temporary slice files. Bounded verbose logs expose worker range, chunk replacement, 10% milestones, temp output, completion, and final concatenation.
 - **Scrollable TUI logs (2026-07-18)**: Logs follow the tail by default; unfocused Up/Down and mouse wheel move through history, while Home/End jump to oldest/newest. Scroll-back is clamped to retained history.
 - **Native Split/Stream profiles (2026-07-18)**: Symbolized two-worker XZ level-1 perf runs attribute 87.29% Split and 87.90% Stream self-cost to four liblzma match-finder/encoder symbols; Rust orchestration, direct chunk input, ordering, and I/O do not appear as material self-costs.
@@ -44,4 +46,4 @@ This file tracks the current state of code implementations and tech stacks maint
 - **CLI Opt-In TUI Bug Fix (R3)**: Resolved TUI defaulting issue. Made TUI strictly opt-in via `-T`/`--tui` with non-TTY/redirection override fallback to false, and environment override `ZIPMT_FORCE_TUI` to true. Updated integration tests to verify opt-in and override logic.
 
 ---
-*Last updated: 2026-07-18T17:14:00-04:00*
+*Last updated: 2026-07-18T18:44:00-04:00*

@@ -1,14 +1,11 @@
 # Current Task
 
-**Status:** Completed / ready for UAT
+**Status:** Completed / ready for QA
 **Assigned to:** Neo
 
-Unified the existing Chunk control across Stream allocations and reusable Split
-read chunks, eliminated the Stream reader clone and intermediate encoder read
-copy, retained direct Split encoder-to-temp-file output, and added bounded
-worker lifecycle/progress/concatenation diagnostics. The TUI log panel now
-follows the tail and supports keyboard and mouse history navigation. Native
-Split and Stream profiling confirms liblzma dominates CPU cost.
+Added an MLflow-inspired deterministic tool-efficiency rubric to Judge. Sixteen
+focused tests pass. The full active session now reports one efficiency finding:
+the same Rust test was run twice without an intervening edit.
 
 ---
-*Last updated: 2026-07-18T17:14:00-04:00*
+*Last updated: 2026-07-18T18:44:00-04:00*

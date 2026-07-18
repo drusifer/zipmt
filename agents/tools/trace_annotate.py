@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """
-trace_annotate.py — Annotated tool-use extractor for Claude Code JSONL sessions.
+trace_annotate.py — Annotated tool-use extractor for Codex CLI and Claude Code.
 
 Usage:
     python agents/tools/trace_annotate.py [--date YYYY-MM-DD] [--out FILE]
                                            [--format html|md] [--rules FILE]
                                            [--no-via] [--project DIR]
+                                           [--source auto|codex|claude]
 
 Defaults:
     --date      yesterday
     --out       agents/trin.docs/judge_tool_trace.html  (or .md if --format md)
     --format    html
     --rules     agents/tools/trace_rules.json   (auto-loaded if present)
-    --project   auto-detected from CWD
+    --project   project working directory (default: CWD)
+    --source    Codex traces first, then Claude fallback
 
 Anti-patterns detected:
     AP-SKILL-RELOAD    Same Skill invoked more than once in a session
@@ -27,7 +29,10 @@ Anti-patterns detected:
 import argparse
 import html as html_lib
 import json
+import os
 import re
+import shlex
+import subprocess
 import sys
 from collections import Counter
 from datetime import date, timedelta
@@ -75,6 +80,26 @@ BUILTIN_RULES: dict[str, dict] = {
         'description': 'Same file Read 3+ times in one session without the file changing.',
         'fix': 'Read once, keep excerpt in context. Re-Read only to verify after an edit.',
         'color': '#eab308',
+    },
+    'AP-DUP-TOOL': {
+        'description': 'Same tool and arguments repeated within five calls without an intervening edit.',
+        'fix': 'Reuse the prior result or explain what new information makes the repeated call necessary.',
+        'color': '#fb7185',
+    },
+    'AP-UNCHANGED-RETRY': {
+        'description': 'A tool call was immediately retried with identical arguments.',
+        'fix': 'Inspect the failure, change the inputs or strategy, and cap unchanged retries.',
+        'color': '#f43f5e',
+    },
+    'AP-RETEST-NO-CHANGE': {
+        'description': 'The same test target was rerun without an intervening code edit.',
+        'fix': 'Do not rerun an unchanged test unless external state changed; record that reason when it did.',
+        'color': '#fb923c',
+    },
+    'AP-SEARCH-LOOP': {
+        'description': 'The same search was repeated without an intervening edit or scope change.',
+        'fix': 'Reuse the earlier result or change the query/scope before searching again.',
+        'color': '#c084fc',
     },
 }
 
@@ -125,38 +150,83 @@ def load_rules(path: Path) -> dict[str, dict]:
 # Detection
 # ---------------------------------------------------------------------------
 
-MAKE_BYPASS_RE = re.compile(
-    r'(?:^|\s|;|&&|\|\|)(?:\.venv/bin/|venv/bin/)?(pytest|ruff|pylint|mypy|black|isort|coverage|py\.test)\b',
-    re.MULTILINE
-)
-VENV_RE = re.compile(r'\.venv/bin/\w+')
+MAKE_BYPASS_TOOLS = {
+    'pytest', 'ruff', 'pylint', 'mypy', 'black', 'isort', 'coverage', 'py.test',
+}
 # Only flag `make <target> ... |` when <target> is actually routed through mkf.py
 # (captured to build/build.out, per the Makefile's interception layer). Targets
 # excluded from mkf capture (chat, help, install_bob, update_bob, pull_bob,
 # clean_bob) have no build.out equivalent to tail instead, so piping their
 # output isn't the anti-pattern this rule targets.
 MKF_EXCLUDED_TARGETS = {'help', 'chat', 'install_bob', 'update_bob', 'pull_bob', 'clean_bob'}
-MAKE_PIPE_RE = re.compile(
-    r'\bmake\b\s+(?:MKF_ACTIVE=\S+\s+)?(?P<target>[a-zA-Z_-]+)[^\n]*\|'
-)
 VIA_SYMBOL_GREP_RE = re.compile(
-    r'\b(grep|rg)\b.*?(def |class |import |from |__init__|__call__|->|@\w+)',
+    r'(?:def |class |import |from |__init__|__call__|->|@\w+)',
     re.IGNORECASE
 )
 SOURCE_EXTENSIONS = {'.py', '.ts', '.tsx', '.js', '.jsx', '.go', '.rs', '.rb'}
+EFFICIENCY_RULES = {
+    'AP-DUP-TOOL', 'AP-UNCHANGED-RETRY', 'AP-RETEST-NO-CHANGE',
+    'AP-SEARCH-LOOP', 'AP-DUP-READ',
+}
+EFFICIENCY_EXEMPT_TOOLS = {'write_stdin', 'wait_agent'}
+
+
+def _shell_segments(cmd: str) -> list[tuple[list[str], str | None]]:
+    """Return quote-aware command segments and the operator following each."""
+    lexer = shlex.shlex(cmd, posix=True, punctuation_chars=';&|')
+    lexer.whitespace_split = True
+    lexer.commenters = ''
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return [([cmd], None)]
+
+    segments: list[tuple[list[str], str | None]] = []
+    current: list[str] = []
+    for token in tokens:
+        if token in {';', '&&', '||', '|', '&'}:
+            if current:
+                segments.append((current, token))
+                current = []
+        else:
+            current.append(token)
+    if current:
+        segments.append((current, None))
+    return segments
+
+
+def _executable(tokens: list[str]) -> tuple[str, int]:
+    index = 0
+    while index < len(tokens) and re.match(r'^[A-Za-z_]\w*=.*$', tokens[index]):
+        index += 1
+    while index < len(tokens) and tokens[index] in {'command', 'env', 'sudo'}:
+        index += 1
+    if index >= len(tokens):
+        return '', index
+    return tokens[index], index
 
 
 def classify_bash(cmd: str) -> list[str]:
-    flags = []
-    if MAKE_BYPASS_RE.search(cmd):
-        flags.append('AP-MAKE-BYPASS')
-    if VENV_RE.search(cmd):
-        flags.append('AP-RAW-VENV')
-    pipe_match = MAKE_PIPE_RE.search(cmd)
-    if pipe_match and pipe_match.group('target') not in MKF_EXCLUDED_TARGETS:
-        flags.append('AP-MAKE-PIPE')
-    if VIA_SYMBOL_GREP_RE.search(cmd):
-        flags.append('AP-VIA-GREP')
+    flags: list[str] = []
+    for tokens, following_operator in _shell_segments(cmd):
+        executable, index = _executable(tokens)
+        tool = Path(executable).name
+        if tool in MAKE_BYPASS_TOOLS and 'AP-MAKE-BYPASS' not in flags:
+            flags.append('AP-MAKE-BYPASS')
+        if re.search(r'(?:^|/)(?:\.venv|venv)/bin/[^/]+$', executable):
+            if 'AP-RAW-VENV' not in flags:
+                flags.append('AP-RAW-VENV')
+        if tool == 'make' and following_operator == '|':
+            target_index = index + 1
+            if target_index < len(tokens) and tokens[target_index].startswith('MKF_ACTIVE='):
+                target_index += 1
+            target = tokens[target_index] if target_index < len(tokens) else ''
+            if target not in MKF_EXCLUDED_TARGETS and 'AP-MAKE-PIPE' not in flags:
+                flags.append('AP-MAKE-PIPE')
+        if tool in {'rg', 'grep'}:
+            arguments = ' '.join(tokens[index + 1:])
+            if VIA_SYMBOL_GREP_RE.search(arguments) and 'AP-VIA-GREP' not in flags:
+                flags.append('AP-VIA-GREP')
     return flags
 
 
@@ -164,30 +234,126 @@ def classify_bash(cmd: str) -> list[str]:
 # Parsing
 # ---------------------------------------------------------------------------
 
-def parse_session(path: Path) -> list[dict]:
+def _json_dict(value) -> dict:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def _canonical_tool(name: str, inp: dict) -> tuple[str, dict]:
+    short = name.rsplit('.', 1)[-1]
+    aliases = {
+        'exec_command': 'Bash', 'read_file': 'Read', 'apply_patch': 'Edit',
+        'spawn_agent': 'Agent', 'search_query': 'WebSearch', 'open': 'WebFetch',
+    }
+    canonical = aliases.get(short, name)
+    normalized = dict(inp)
+    if canonical == 'Bash' and 'command' not in normalized:
+        normalized['command'] = normalized.get('cmd', '')
+    return canonical, normalized
+
+
+def _codex_custom_calls(payload: dict, timestamp: str) -> list[dict]:
+    """Extract tool calls from Codex code-mode custom_tool_call JavaScript."""
+    script = str(payload.get('input', ''))
+    calls = []
+    for match in re.finditer(r'\btools\.([A-Za-z_]\w*)\s*\(', script):
+        tool = match.group(1)
+        inp: dict = {}
+        if tool == 'exec_command':
+            cmd = re.search(r'\bcmd\s*:\s*("(?:\\.|[^"\\])*")', script[match.end():])
+            if cmd:
+                try:
+                    inp['cmd'] = json.loads(cmd.group(1))
+                except json.JSONDecodeError:
+                    pass
+        elif tool == 'apply_patch':
+            patch_literal = re.search(
+                r'\b(?:const|let)\s+patch\s*=\s*("(?:\\.|[^"\\])*")', script)
+            if patch_literal:
+                try:
+                    patch = json.loads(patch_literal.group(1))
+                    paths = re.findall(
+                        r'^\*\*\* (?:Add|Update|Delete) File: (.+)$',
+                        patch, re.MULTILINE)
+                    inp['file_path'] = ', '.join(paths)
+                except json.JSONDecodeError:
+                    pass
+        name, inp = _canonical_tool(tool, inp)
+        calls.append({
+            'name': name, 'input': inp,
+            'id': payload.get('call_id', payload.get('id', '')), 'ts': timestamp,
+        })
+    if not calls:
+        name, inp = _canonical_tool(payload.get('name', 'custom_tool_call'), {})
+        calls.append({
+            'name': name, 'input': inp,
+            'id': payload.get('call_id', payload.get('id', '')), 'ts': timestamp,
+        })
+    return calls
+
+
+def parse_tracegate_events(trace: dict) -> list[dict]:
+    """Map Tracegate's normalized events into Judge's compact tool-call model."""
     events = []
-    with open(path) as f:
-        for line in f:
-            try:
-                obj = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if obj.get('type') != 'assistant':
-                continue
-            msg = obj.get('message', {})
-            content = msg.get('content', [])
-            if not isinstance(content, list):
-                continue
-            for c in content:
-                if not isinstance(c, dict) or c.get('type') != 'tool_use':
-                    continue
-                events.append({
-                    'name': c.get('name', ''),
-                    'input': c.get('input', {}),
-                    'id': c.get('id', ''),
-                    'ts': obj.get('timestamp', ''),
-                })
+    for event in trace.get('run', {}).get('events', []):
+        raw = event.get('raw') or {}
+        timestamp = str(event.get('timestamp') or '')
+        if raw.get('type') == 'function_call':
+            name, inp = _canonical_tool(
+                raw.get('name', ''), _json_dict(raw.get('arguments', {})))
+            events.append({
+                'name': name, 'input': inp,
+                'id': raw.get('call_id', raw.get('id', '')), 'ts': timestamp,
+            })
+        elif raw.get('type') == 'custom_tool_call':
+            events.extend(_codex_custom_calls(raw, timestamp))
+        elif raw.get('type') == 'tool_use':
+            name, inp = _canonical_tool(raw.get('name', ''), _json_dict(raw.get('input', {})))
+            events.append({
+                'name': name, 'input': inp, 'id': raw.get('id', ''), 'ts': timestamp,
+            })
+        elif event.get('command'):
+            events.append({
+                'name': 'Bash', 'input': {'command': event['command']},
+                'id': '', 'ts': timestamp,
+            })
+        elif event.get('type') in ('file_read', 'read_file'):
+            events.append({
+                'name': 'Read', 'input': {'file_path': event.get('path', '')},
+                'id': '', 'ts': timestamp,
+            })
+        elif event.get('type') in ('file_edit', 'file_write', 'write_file'):
+            events.append({
+                'name': 'Edit', 'input': {'file_path': event.get('path', '')},
+                'id': '', 'ts': timestamp,
+            })
+        elif event.get('type') == 'tool_call':
+            name, inp = _canonical_tool(
+                str(event.get('tool') or event.get('category') or ''), _json_dict(event.get('input', {})))
+            events.append({'name': name, 'input': inp, 'id': '', 'ts': timestamp})
     return events
+
+
+def parse_session(path: Path, source: str) -> list[dict]:
+    """Normalize a native CLI trace with Tracegate, then extract tool calls."""
+    command = [
+        sys.executable, '-m', 'tracegate.cli', 'inspect',
+        '--format', source, '--json', '--include-raw', str(path),
+    ]
+    try:
+        result = subprocess.run(command, check=True, capture_output=True, text=True)
+    except FileNotFoundError as exc:
+        raise RuntimeError('Tracegate is not installed; run: make judge-tools-install') from exc
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f'Tracegate failed for {path}: {exc.stderr.strip()}') from exc
+    return parse_tracegate_events(json.loads(result.stdout))
 
 
 def summarize_input(name: str, inp: dict) -> str:
@@ -233,6 +399,30 @@ def _paths_edited(events: list[dict]) -> set[str]:
     return edited
 
 
+def _normalized_signature(name: str, inp: dict) -> str:
+    return f'{name}:{json.dumps(inp, sort_keys=True, separators=(",", ":"), default=str)}'
+
+
+def _bash_activity(command: str) -> str | None:
+    """Classify commands used by deterministic efficiency checks."""
+    for tokens, _ in _shell_segments(command):
+        executable, index = _executable(tokens)
+        tool = Path(executable).name
+        arguments = tokens[index + 1:]
+        if tool == 'make':
+            while arguments and arguments[0].startswith(('MKF_ACTIVE=', 'V=')):
+                arguments.pop(0)
+            target = arguments[0] if arguments else ''
+            if target.startswith('test') or target in {
+                    'rust-clippy', 'rust-quality', 'rust-format-check', 'judge-trace-test'}:
+                return 'test'
+        if tool in {'rg', 'grep', 'find'}:
+            return 'search'
+        if tool == 'via':
+            return 'search'
+    return None
+
+
 def annotate_events(events: list[dict], rules: dict, no_via: bool) -> list[dict]:
     """Return list of annotated event dicts for template rendering."""
     skill_seen: Counter = Counter()
@@ -242,6 +432,10 @@ def annotate_events(events: list[dict], rules: dict, no_via: bool) -> list[dict]
     # the same offset if no edit landed on the file in between.
     edit_generation: Counter = Counter()
     read_sig_seen: Counter = Counter()
+    last_signature: str | None = None
+    recent_signatures: dict[str, tuple[int, int]] = {}
+    activity_seen: dict[tuple[str, str, int], int] = {}
+    mutation_generation = 0
     skill_reload_allowed = set(rules.get('AP-SKILL-RELOAD', {}).get('multi_call_allowed', []))
     annotated = []
 
@@ -249,6 +443,8 @@ def annotate_events(events: list[dict], rules: dict, no_via: bool) -> list[dict]
         name = ev['name']
         inp = ev['input']
         flags: list[str] = []
+        signature = _normalized_signature(name, inp)
+        activity = _bash_activity(inp.get('command', '')) if name == 'Bash' else None
 
         if name == 'Bash':
             flags = classify_bash(inp.get('command', ''))
@@ -266,11 +462,28 @@ def annotate_events(events: list[dict], rules: dict, no_via: bool) -> list[dict]
             path = inp.get('file_path', '')
             if path:
                 edit_generation[path] += 1
+            mutation_generation += 1
         elif name == 'Skill':
             skill = inp.get('skill', '')
             skill_seen[skill] += 1
             if skill_seen[skill] > 1 and skill not in skill_reload_allowed:
                 flags.append('AP-SKILL-RELOAD')
+
+        if activity:
+            activity_key = (activity, signature, mutation_generation)
+            if activity_key in activity_seen:
+                flags.append('AP-RETEST-NO-CHANGE' if activity == 'test' else 'AP-SEARCH-LOOP')
+            activity_seen[activity_key] = seq
+        elif name not in {'Read', 'Edit', 'Write', 'Skill', *EFFICIENCY_EXEMPT_TOOLS}:
+            if signature == last_signature:
+                flags.append('AP-UNCHANGED-RETRY')
+            elif signature in recent_signatures:
+                prior_seq, prior_generation = recent_signatures[signature]
+                if seq - prior_seq <= 5 and prior_generation == mutation_generation:
+                    flags.append('AP-DUP-TOOL')
+
+        recent_signatures[signature] = (seq, mutation_generation)
+        last_signature = signature
 
         if no_via:
             flags = [f for f in flags if 'VIA' not in f]
@@ -392,6 +605,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     <div class="stat"><span class="val">{{ total_flags }}</span><span class="lbl">Flags</span></div>
     <div class="stat"><span class="val">{{ "%.1f"|format(total_flags / total_calls * 100 if total_calls else 0) }}%</span><span class="lbl">Flag Rate</span></div>
     <div class="stat"><span class="val">{{ sessions|length }}</span><span class="lbl">Sessions</span></div>
+    <div class="stat"><span class="val">{{ efficiency_verdict }}</span><span class="lbl">Tool Efficiency</span></div>
   </div>
 </div>
 
@@ -522,25 +736,69 @@ function filterAll(btn) {
 # Project / session helpers
 # ---------------------------------------------------------------------------
 
-SESSION_TIMES = {
-    '4889fc26': '16:06', '382f5b6d': '16:45', 'afa45da3': '17:27',
-    'a6e0e4e9': '17:57', '06e03489': '18:52', '1c48b96a': '19:11',
-}
-
-
-def find_project_dir(cwd: Path) -> Path | None:
+def find_claude_project_dir(cwd: Path) -> Path | None:
     slug = '-' + str(cwd).replace('/', '-').lstrip('-')
     candidate = Path.home() / '.claude' / 'projects' / slug
     return candidate if candidate.exists() else None
 
 
-def sessions_for_date(project_dir: Path, target: date) -> list[tuple[str, Path]]:
+def claude_sessions_for_date(project_dir: Path, target: date) -> list[dict]:
     results = []
     for p in sorted(project_dir.glob('*.jsonl')):
         if date.fromtimestamp(p.stat().st_mtime) == target:
-            results.append((p.stem[:8], p))
-    results.sort(key=lambda x: x[1].stat().st_mtime)
+            results.append({
+                'source': 'claude', 'sid': p.stem[:8], 'path': p,
+                'time': __import__('datetime').datetime.fromtimestamp(
+                    p.stat().st_mtime).strftime('%H:%M'),
+            })
+    results.sort(key=lambda x: x['path'].stat().st_mtime)
     return results
+
+
+def _codex_session_meta(path: Path) -> dict:
+    with open(path) as f:
+        for line in f:
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if obj.get('type') == 'session_meta':
+                return obj.get('payload', {})
+    return {}
+
+
+def codex_sessions_for_date(cwd: Path, target: date) -> list[dict]:
+    codex_home = Path(os.environ.get('CODEX_HOME', Path.home() / '.codex'))
+    day_dir = codex_home / 'sessions' / f'{target:%Y}' / f'{target:%m}' / f'{target:%d}'
+    results = []
+    for path in sorted(day_dir.glob('rollout-*.jsonl')):
+        meta = _codex_session_meta(path)
+        session_cwd = meta.get('cwd')
+        if not session_cwd:
+            continue
+        try:
+            if Path(session_cwd).resolve() != cwd.resolve():
+                continue
+        except OSError:
+            continue
+        timestamp = str(meta.get('timestamp', ''))
+        results.append({
+            'source': 'codex',
+            'sid': str(meta.get('id') or meta.get('session_id') or path.stem)[0:8],
+            'path': path,
+            'time': timestamp[11:16] if len(timestamp) >= 16 else '??:??',
+        })
+    return results
+
+
+def sessions_for_date(cwd: Path, target: date, source: str) -> list[dict]:
+    codex = codex_sessions_for_date(cwd, target) if source in ('auto', 'codex') else []
+    claude_dir = find_claude_project_dir(cwd)
+    claude = (claude_sessions_for_date(claude_dir, target)
+              if claude_dir and source in ('auto', 'claude') else [])
+    if source == 'auto':
+        return codex + claude
+    return codex if source == 'codex' else claude
 
 
 # ---------------------------------------------------------------------------
@@ -555,21 +813,17 @@ def main():
     parser.add_argument('--format', choices=['html', 'md'], default='html')
     parser.add_argument('--rules', default=str(DEFAULT_RULES_PATH))
     parser.add_argument('--no-via', action='store_true')
-    parser.add_argument('--project', default=None)
+    parser.add_argument('--project', default=None, help='Project working directory (default: CWD)')
+    parser.add_argument('--source', choices=['auto', 'codex', 'claude'], default='auto')
     args = parser.parse_args()
 
     target_date = date.fromisoformat(args.date)
-    cwd = Path.cwd()
-
-    project_dir = Path(args.project) if args.project else find_project_dir(cwd)
-    if not project_dir:
-        print(f'ERROR: Could not find Claude project dir for {cwd}', file=sys.stderr)
-        sys.exit(1)
+    cwd = (Path(args.project) if args.project else Path.cwd()).resolve()
 
     rules = load_rules(Path(args.rules))
-    sessions_raw = sessions_for_date(project_dir, target_date)
+    sessions_raw = sessions_for_date(cwd, target_date, args.source)
     if not sessions_raw:
-        print(f'No sessions found for {target_date}', file=sys.stderr)
+        print(f'No {args.source} sessions found for {cwd} on {target_date}', file=sys.stderr)
         sys.exit(1)
 
     if args.out:
@@ -584,8 +838,9 @@ def main():
     total_calls = 0
     total_flags_list: list[str] = []
 
-    for sid, path in sessions_raw:
-        events_raw = parse_session(path)
+    for session in sessions_raw:
+        sid, path = session['sid'], session['path']
+        events_raw = parse_session(path, session['source'])
         if not events_raw:
             continue
         annotated = annotate_events(events_raw, rules, args.no_via)
@@ -595,13 +850,16 @@ def main():
         total_flags_list.extend(all_flags)
         sessions_data.append({
             'sid': sid,
-            'time': SESSION_TIMES.get(sid, '??:??'),
+            'time': f"{session['time']} · {session['source']}",
             'events': annotated,
             'flag_count': len(all_flags),
             'ap_counts': dict(ap_counts.most_common()),
         })
 
     flag_counts = Counter(total_flags_list)
+    efficiency_flags = sum(count for code, count in flag_counts.items()
+                           if code in EFFICIENCY_RULES)
+    efficiency_verdict = 'YES' if efficiency_flags == 0 else 'NO'
 
     if args.format == 'html':
         import json as _json
@@ -618,6 +876,7 @@ def main():
             total_flags=len(total_flags_list),
             flag_counts=flag_counts.most_common(),
             ap_codes=list(rules.keys()),
+            efficiency_verdict=efficiency_verdict,
         )
         out_path.write_text(rendered)
     else:
@@ -630,7 +889,9 @@ def main():
                 lines.append(f'  `[{ev["seq"]:03d}]` **{ev["name"]}**: {ev["summary"]}' +
                               (f'\n    > {flags_str}' if flags_str else ''))
         lines += ['', '---', '## Summary', '',
-                  f'**Total:** {total_calls} calls, {len(total_flags_list)} flags', '',
+                  f'**Total:** {total_calls} calls, {len(total_flags_list)} flags',
+                  f'**MLflow-style tool efficiency:** {efficiency_verdict} '
+                  f'({efficiency_flags} deterministic findings)', '',
                   '| AP | Count |', '|---|---|']
         for ap, cnt in flag_counts.most_common():
             lines.append(f'| `{ap}` | {cnt} |')

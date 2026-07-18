@@ -1,11 +1,7 @@
 # Next Steps
 
-- Refactor the three functions above cognitive complexity 20.
-- Triage the 22 strict Clippy findings, then rerun `make rust-quality`.
-- Evaluate cargo-geiger parser warnings before enforcing it in CI.
-- Install and exercise nightly Miri, Valgrind, and perf on a suitable host.
-- Have Tank wire the green, deterministic targets into CI after baseline debt is
-  resolved.
+- Await Neo fixes for active-session discovery, Codex Skill derivation, and shell-rule tokenization.
+- Rerun the same Judge trace after fixes and hand the result to Smith for rescoring.
 
 ---
-*Last updated: 2026-07-18T12:27:00-04:00*
+*Last updated: 2026-07-18T18:33:00-04:00*

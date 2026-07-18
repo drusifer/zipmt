@@ -18,13 +18,25 @@ endif
 
 # ── Bob Protocol Targets ─────────────────────────────────────────────────────
 
-.PHONY: tldr test test-rust format-rust rust-format-check rust-clippy rust-complexity rust-cyclomatic rust-dead-code rust-quality rust-audit rust-unsafe rust-miri rust-memcheck rust-profile rust-profile-report rust-profile-stream rust-callgrind rust-bloat rust-quality-full rust-tools-check rust-tools-install build-rust build-rust-debug via_index install_bob update_bob pull_bob clean_bob diff_bob
+.PHONY: tldr test judge-tools-install judge-trace judge-trace-test test-rust format-rust rust-format-check rust-clippy rust-complexity rust-cyclomatic rust-dead-code rust-quality rust-audit rust-unsafe rust-miri rust-memcheck rust-profile rust-profile-report rust-profile-stream rust-callgrind rust-bloat rust-quality-full rust-tools-check rust-tools-install build-rust build-rust-debug via_index install_bob update_bob pull_bob clean_bob diff_bob
 
 tldr: ## Show TL;DR summaries from all project files (quick orientation for agents)
 	@rg --no-heading "TLDR:" --glob "*.md" -N | sed 's|^\./||' | sort
 
 test: ## Run unit tests
 	@python -m unittest discover -s tests
+
+judge-tools-install: ## Install the Judge trace normalization dependencies
+	@python -m venv .judge-venv
+	@.judge-venv/bin/python -m pip install -r agents/tools/requirements-judge.txt
+
+judge-trace: ## Render Codex/Claude tool traces (DATE, FORMAT, SOURCE, OUT optional)
+	@test -x .judge-venv/bin/python || { echo "missing Judge environment; run: make judge-tools-install"; exit 2; }
+	@.judge-venv/bin/python agents/tools/trace_annotate.py $(if $(DATE),--date "$(DATE)") $(if $(FORMAT),--format "$(FORMAT)") $(if $(SOURCE),--source "$(SOURCE)") $(if $(OUT),--out "$(OUT)") $(if $(PROJECT),--project "$(PROJECT)")
+
+judge-trace-test: ## Run focused tests for the Judge trace parser
+	@test -x .judge-venv/bin/python || { echo "missing Judge environment; run: make judge-tools-install"; exit 2; }
+	@.judge-venv/bin/python -m unittest tests.test_trace_annotate
 
 test-rust: ## Run Rust unit tests
 	@cd zipmt-rust && cargo test $(ARGS)
@@ -313,6 +325,15 @@ chat: ## Post a message to CHAT.md (usage: make chat MSG="<msg>" [PERSONA="<name
 		$(if $(TO),--to "$(TO)")
 
 test: ## Run unit tests
+	@./agents/tools/mkf.py $(V) $@
+
+judge-tools-install: ## Install the Judge trace normalization dependencies
+	@./agents/tools/mkf.py $(V) $@
+
+judge-trace: ## Render Codex/Claude tool traces (DATE, FORMAT, SOURCE, OUT optional)
+	@./agents/tools/mkf.py $(V) $@ DATE="$(DATE)" FORMAT="$(FORMAT)" SOURCE="$(SOURCE)" OUT="$(OUT)" PROJECT="$(PROJECT)"
+
+judge-trace-test: ## Run focused tests for the Judge trace parser
 	@./agents/tools/mkf.py $(V) $@
 
 test-rust: ## Run Rust unit tests

@@ -28,5 +28,21 @@
   "AP-DUP-READ": {
     "description": "Same file Read 3+ times in one session without the file changing between reads.",
     "fix": "Read a file once and keep the relevant excerpt in context. Use Edit/Write to change it; only re-Read if you need to verify the result of an edit."
+  },
+  "AP-DUP-TOOL": {
+    "description": "Same tool and arguments repeated within five calls without an intervening edit.",
+    "fix": "Reuse the prior result or explain what new information makes the repeated call necessary."
+  },
+  "AP-UNCHANGED-RETRY": {
+    "description": "A tool call was immediately retried with identical arguments.",
+    "fix": "Inspect the failure, change the inputs or strategy, and cap unchanged retries."
+  },
+  "AP-RETEST-NO-CHANGE": {
+    "description": "The same test target was rerun without an intervening code edit.",
+    "fix": "Do not rerun an unchanged test unless external state changed; record that reason when it did."
+  },
+  "AP-SEARCH-LOOP": {
+    "description": "The same search was repeated without an intervening edit or scope change.",
+    "fix": "Reuse the earlier result or change the query/scope before searching again."
   }
 }

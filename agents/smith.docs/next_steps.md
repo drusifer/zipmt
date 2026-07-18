@@ -1,11 +1,7 @@
 # Next Steps
 
-- Preserve gauge/stats separation, fixed metric positions, and explicit overflow.
-- Preserve readable contrast across the full progress range.
-- Preserve graph series contrast and readable axis labels at minimum width.
-- Preserve the visual hierarchy between dotted guides and the center divider.
-- Preserve stable ratio placement while its ten-chunk average changes.
-- Preserve agreement between the displayed AVG rate and ETA behavior.
+- Re-score after Neo fixes active/latest discovery, Codex Skill derivation, and shell parsing.
+- Preserve full-session scope whenever the active rollout began before today.
 
 ---
-*Last updated: 2026-07-17T22:39:00-04:00*
+*Last updated: 2026-07-18T18:34:00-04:00*

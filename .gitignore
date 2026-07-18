@@ -10,6 +10,7 @@
 # Python caches
 __pycache__/
 *.pyc
+/.judge-venv/
 
 # Local files & backups
 .rustup_home/

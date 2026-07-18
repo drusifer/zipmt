@@ -3,6 +3,7 @@
 This file tracks the HCI evaluations, gate reviews, and usability criteria maintained by the HCI Expert (Smith).
 
 ## Recent Decisions
+- **Judge tool/skill TES (2026-07-18)**: Scored the complete active Codex rollout from its July 16 start at 82/100. Nine raw flags reduce to one confirmed Via bypass. Active/latest discovery, Codex skill-load visibility, and shell-rule false positives require correction.
 - **Approved completion/smoothed I/O real UX (2026-07-17)**: Actual 80x22/120x30 sessions retain COMPLETE with final stats and close guidance; RATE exposes its MA5 overlay and stable labels.
 - **Approved real Split TUI uplift UX (2026-07-17)**: Actual 80x22 and 120x30 Split runs show readable aggregate/lifecycle state, explicit range/overflow, mirrored chart parity, larger-terminal expansion, and honest fixed Level/Partition/Pool presentation.
 - **Approved Split TUI uplift architecture (2026-07-17)**: Typed sector stages, completed-only ratio, rate-gated ETA, responsive range/overflow paging, and shared mirrored chart provide truthful visibility. Split Level/Partition/Pool remain visible but fixed and absent from focus/input; Pause/Throttle remain live.
@@ -31,4 +32,4 @@ This file tracks the HCI evaluations, gate reviews, and usability criteria maint
 - **Heuristic 8 (Aesthetic & Minimalist Design)**: Centered layout logic (constrained to 80x15 viewport) looks stunning on any terminal size and avoids visual noise, organizing blocks via structured boundaries and unified labels.
 
 ---
-*Last updated: 2026-07-17T15:20:00-04:00*
+*Last updated: 2026-07-18T18:34:00-04:00*

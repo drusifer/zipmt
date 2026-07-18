@@ -1,13 +1,16 @@
 # Next Steps
 
 ## Immediate Next Action
-None planned
+
+None; Judge trace ingestion is ready for use.
 
 ## Waiting On
-None
+
+User direction for any additional Tracegate policy configuration.
 
 ## Planned Work
-- [ ] No planned work
+
+- [ ] Optionally expose project-specific Tracegate policy gates if Judge needs enforcement beyond its existing TES rubric.
 
 ---
-*Last updated: [timestamp]*
+*Last updated: 2026-07-18T18:27:00-04:00*
