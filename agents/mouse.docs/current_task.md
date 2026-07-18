@@ -3,8 +3,9 @@
 **Status:** Completed / sprint closed
 **Assigned to:** Mouse
 
-Closed Worker Ratio and Chart Separation sprint 4/4. Velocity: 98 tasks across
-18 sprints.
+Closed Rust Quality Tooling sprint 3/3. The audit passes with the MIT license;
+existing Clippy/complexity findings and CI enforcement remain visible backlog.
+Velocity: 101 tasks across 19 sprints.
 
 ---
-*Last updated: 2026-07-17T22:40:00-04:00*
+*Last updated: 2026-07-18T12:32:00-04:00*

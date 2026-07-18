@@ -22,3 +22,4 @@ This document records the historical sprint data for the `zipmt` project.
 | Compact Stream Worker Cards Sprint | 2026-07-17 | 4 / 4 | 7 | Add bordered worker cards, fixed-point telemetry rows, and accessible gauge-label contrast. |
 | Native Multi-series I/O Chart Sprint | 2026-07-17 | 2 / 2 | 7 | Replace custom graph text with signed Braille Chart datasets, MA10s overlays, and dotted guides. |
 | Worker Ratio and Chart Separation Sprint | 2026-07-17 | 4 / 4 | 7 | Add 10-chunk worker rate/ratio smoothing, stable ETA, and a faint native center divider. |
+| Rust Quality Tooling Sprint | 2026-07-18 | 3 / 3 | Audit passed | Add reproducible Rust formatting, lint, complexity, security, memory-analysis, profiling, and size-analysis workflows. |

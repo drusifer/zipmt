@@ -3,6 +3,7 @@
 This file tracks active sprint plans, velocity, and coordination details maintained by the Scrum Master (Mouse).
 
 ## Recent Decisions
+- **Closed Rust Quality Tooling sprint (2026-07-18)**: Closed 3/3 setup tasks after MIT license and dependency audit passed. CI enforcement is explicitly backlog, not committed scope. Velocity is 101 tasks across 19 sprints.
 - **Closed graph/Stream worker sprint (2026-07-17)**: Closed 4/4 with 39 unit + 7 integration tests; velocity is 88 tasks across 15 sprints.
 - **Closed slice observability sprint (2026-07-17)**: Closed 6/6 with 37 unit + 7 integration tests and real 80x22/120x30 approval; velocity is 84 tasks across 14 sprints.
 - **Closed bounded-memory Split streaming sprint (2026-07-17)**: Closed 4/4 with 35 unit + 7 integration tests; velocity is 78 tasks across 13 sprints.
@@ -23,4 +24,4 @@ This file tracks active sprint plans, velocity, and coordination details maintai
 - **Tier 2 Sprint execution**: Bypassed major planning overhead by combining Cypher/Morpheus drafting and Smith reviews into single-turn loops, reducing planning time.
 
 ---
-*Last updated: 2026-07-17T15:25:00-04:00*
+*Last updated: 2026-07-18T12:32:00-04:00*

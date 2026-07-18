@@ -54,4 +54,4 @@
 - [x] **Task 9.1 — Core quality gates:** Add Make targets for rustfmt, strict Clippy, cognitive complexity, cyclomatic metrics, and dead-code checks. (Assignee: Trin)
 - [x] **Task 9.2 — Security and analysis tools:** Add RustSec, cargo-deny, cargo-geiger, Miri, Valgrind, flamegraph, and binary-bloat workflows. (Assignee: Trin)
 - [x] **Task 9.3 — Baseline and documentation:** Install Cargo tools, document usage, and record existing quality debt without suppressing findings. (Assignee: Trin)
-- [ ] **Task 9.4 — CI enforcement:** Resolve baseline blockers and wire deterministic quality gates into CI. (Assignee: Tank | UAT: Trin)
+- [ ] **Backlog 9.4 — CI enforcement:** Resolve baseline blockers and wire deterministic quality gates into CI. This is follow-on scope, not a Rust Quality Tooling sprint commitment. (Assignee: Tank | UAT: Trin)
