@@ -1,14 +1,13 @@
 # Next Steps
 
 ## Immediate Next Action
-- Wait for Smith (@Smith) to perform UX/acceptance review of the interactive TUI upgrade and decoupling plan in `docs/USER_STORIES_RATATUI_UPGRADE.md`.
+- Smith performs Gate 1 review of `docs/USER_STORIES_SPLIT_TUI_UPLIFT.md`.
 
 ## Waiting On
-- Smith (@Smith) for review and approval gate (`*user review docs/USER_STORIES_RATATUI_UPGRADE.md`).
+- Smith story approval before Morpheus architecture.
 
 ## Planned Work
-- [ ] Incorporate feedback from user/Smith review.
-- [ ] Hand off to Mouse for task breakdown and planning in `task.md`.
+- [ ] Hand approved stories to Morpheus for architecture.
 
 ---
-*Last updated: 2026-07-15T16:42:00*
+*Last updated: 2026-07-17T14:51:00-04:00*

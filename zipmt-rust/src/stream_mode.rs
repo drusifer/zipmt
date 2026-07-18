@@ -2,12 +2,10 @@ use crate::compressor::{Compressor, ZipError};
 use crate::pipeline::{PipelineController, ProgressEvent};
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::{Sender, channel, sync_channel};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::mpsc::{RecvTimeoutError, Sender, channel, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
-
-const BLOCK_SIZE: usize = 4 * 1024 * 1024; // 4MB
 
 pub struct Block {
     pub seq_num: u64,
@@ -15,6 +13,7 @@ pub struct Block {
 }
 
 pub struct CompressedBlock {
+    pub worker_id: usize,
     pub seq_num: u64,
     pub data: Result<Vec<u8>, ZipError>,
 }
@@ -47,6 +46,7 @@ pub fn compress_stream(
     let bytes_read = Arc::new(AtomicUsize::new(0));
     let bytes_written = Arc::new(AtomicUsize::new(0));
     let queue_depth = Arc::new(AtomicUsize::new(0));
+    let reader_done = Arc::new(AtomicBool::new(false));
 
     // Use scoped threads to safely pass non-static references across thread boundaries
     let scope_res = thread::scope(|s| {
@@ -55,26 +55,60 @@ pub fn compress_stream(
         // Spawn worker threads
         for worker_id in 0..pool_size {
             let job_rx = Arc::clone(&job_rx);
+            let job_tx_worker = job_tx.clone();
             let result_tx = result_tx.clone();
             let tx = sender.clone();
             let ctrl = controller.clone();
             let bytes_read_clone = bytes_read.clone();
             let bytes_written_clone = bytes_written.clone();
             let queue_depth_clone = queue_depth.clone();
+            let reader_done_clone = reader_done.clone();
 
             let handle = s.spawn(move || {
                 crate::log_verbose!("Worker thread {} started", worker_id);
+                let mut last_enabled = None;
                 loop {
                     if ctrl.is_aborted.load(Ordering::Relaxed) {
                         break;
                     }
+                    let enabled = worker_id < ctrl.active_workers.load(Ordering::Relaxed);
+                    if last_enabled != Some(enabled) {
+                        let _ = tx.send(ProgressEvent::WorkerAvailability { worker_id, enabled });
+                        last_enabled = Some(enabled);
+                    }
+                    if !enabled {
+                        if reader_done_clone.load(Ordering::Relaxed)
+                            && queue_depth_clone.load(Ordering::Relaxed) == 0
+                        {
+                            break;
+                        }
+                        thread::sleep(std::time::Duration::from_millis(25));
+                        continue;
+                    }
                     let block_opt = {
                         let rx_guard = job_rx.lock().unwrap();
-                        rx_guard.recv().ok()
+                        match rx_guard.recv_timeout(std::time::Duration::from_millis(25)) {
+                            Ok(block) => Some(block),
+                            Err(RecvTimeoutError::Timeout) => {
+                                if reader_done_clone.load(Ordering::Relaxed)
+                                    && queue_depth_clone.load(Ordering::Relaxed) == 0
+                                {
+                                    break;
+                                }
+                                continue;
+                            }
+                            Err(RecvTimeoutError::Disconnected) => None,
+                        }
                     };
 
                     match block_opt {
                         Some(block) => {
+                            if worker_id >= ctrl.active_workers.load(Ordering::Relaxed) {
+                                if job_tx_worker.send(block).is_err() {
+                                    break;
+                                }
+                                continue;
+                            }
                             // Update queue depth on block take
                             let q_depth = queue_depth_clone.fetch_sub(1, Ordering::Relaxed) - 1;
                             let _ = tx.send(ProgressEvent::StreamProgress {
@@ -87,6 +121,10 @@ pub fn compress_stream(
                                 status: "BUSY",
                                 current_chunk: Some(block.seq_num),
                             });
+                            let _ = tx.send(ProgressEvent::ChunkAssigned {
+                                worker_id,
+                                seq_num: block.seq_num,
+                            });
 
                             crate::log_verbose!(
                                 "Worker {} compressing block {}",
@@ -94,9 +132,24 @@ pub fn compress_stream(
                                 block.seq_num
                             );
                             let tx_inner = tx.clone();
+                            let total_bytes = block.data.len();
+                            let seq_num = block.seq_num;
+                            let processed = Arc::new(AtomicUsize::new(0));
+                            let processed_callback = processed.clone();
                             let compressed = compressor.compress_with_progress(
                                 &block.data,
-                                &move |_, duration| {
+                                &move |input_bytes, output_bytes, duration| {
+                                    let current = processed_callback
+                                        .fetch_add(input_bytes, Ordering::Relaxed)
+                                        + input_bytes;
+                                    let _ = tx_inner.send(ProgressEvent::WorkerChunkProgress {
+                                        worker_id,
+                                        seq_num,
+                                        bytes_processed: current.min(total_bytes),
+                                        bytes_written: output_bytes,
+                                        total_bytes,
+                                        finalized: false,
+                                    });
                                     let _ =
                                         tx_inner.send(ProgressEvent::AvgCompressionTime(duration));
                                 },
@@ -104,6 +157,14 @@ pub fn compress_stream(
                             );
 
                             let compressed_len = compressed.as_ref().map(|v| v.len()).unwrap_or(0);
+                            let _ = tx.send(ProgressEvent::WorkerChunkProgress {
+                                worker_id,
+                                seq_num: block.seq_num,
+                                bytes_processed: block.data.len(),
+                                bytes_written: compressed_len,
+                                total_bytes: block.data.len(),
+                                finalized: true,
+                            });
                             crate::log_verbose!(
                                 "Worker {} finished block {}: {} -> {} bytes",
                                 worker_id,
@@ -119,6 +180,7 @@ pub fn compress_stream(
                             });
 
                             let result = CompressedBlock {
+                                worker_id,
                                 seq_num: block.seq_num,
                                 data: compressed,
                             };
@@ -149,13 +211,10 @@ pub fn compress_stream(
         let bytes_read_reader = bytes_read.clone();
         let bytes_written_reader = bytes_written.clone();
         let queue_depth_reader = queue_depth.clone();
+        let reader_done_reader = reader_done.clone();
 
         let reader_handle = s.spawn(move || -> Result<(), ZipError> {
-            crate::log_verbose!(
-                "Reader thread started. Buffer block size: {}MB",
-                BLOCK_SIZE / (1024 * 1024)
-            );
-            let mut buffer = vec![0u8; BLOCK_SIZE];
+            crate::log_verbose!("Reader thread started with dynamic block sizing");
             let mut seq_num = 0u64;
 
             loop {
@@ -173,12 +232,20 @@ pub fn compress_stream(
                     break;
                 }
 
+                let chunk_size = ctrl_reader.chunk_size.load(Ordering::Relaxed);
+                let mut buffer = vec![0u8; chunk_size];
                 let mut bytes_read_so_far = 0;
-                while bytes_read_so_far < BLOCK_SIZE {
+                while bytes_read_so_far < chunk_size {
                     if ctrl_reader.is_aborted.load(Ordering::Relaxed) {
                         break;
                     }
-                    let n = input.read(&mut buffer[bytes_read_so_far..])?;
+                    let n = match input.read(&mut buffer[bytes_read_so_far..]) {
+                        Ok(n) => n,
+                        Err(error) => {
+                            reader_done_reader.store(true, Ordering::Relaxed);
+                            return Err(ZipError::Io(error));
+                        }
+                    };
                     if n == 0 {
                         break;
                     }
@@ -208,12 +275,17 @@ pub fn compress_stream(
                     seq_num,
                     data: buffer[..bytes_read_so_far].to_vec(),
                 };
+                let _ = tx_reader.send(ProgressEvent::ChunkQueued {
+                    seq_num,
+                    bytes: bytes_read_so_far,
+                });
                 seq_num += 1;
 
                 if job_tx.send(block).is_err() {
                     break; // Workers shut down
                 }
             }
+            reader_done_reader.store(true, Ordering::Relaxed);
             crate::log_verbose!("Reader thread reached EOF and exiting");
             Ok(())
         });
@@ -235,6 +307,10 @@ pub fn compress_stream(
             match result.data {
                 Ok(compressed_data) => {
                     pending_blocks.insert(result.seq_num, compressed_data);
+                    let _ = tx_writer.send(ProgressEvent::ChunkPending {
+                        worker_id: result.worker_id,
+                        seq_num: result.seq_num,
+                    });
                 }
                 Err(e) => {
                     crate::log_verbose!(
@@ -260,6 +336,9 @@ pub fn compress_stream(
                     queue_depth: queue_depth_writer.load(Ordering::Relaxed),
                 });
                 output.write_all(&data)?;
+                let _ = tx_writer.send(ProgressEvent::ChunkWritten {
+                    seq_num: next_seq_num,
+                });
                 next_seq_num += 1;
             }
         }
@@ -292,6 +371,9 @@ pub fn compress_stream(
                 queue_depth: queue_depth_writer.load(Ordering::Relaxed),
             });
             output.write_all(&data)?;
+            let _ = tx_writer.send(ProgressEvent::ChunkWritten {
+                seq_num: next_seq_num,
+            });
             next_seq_num += 1;
         }
 
@@ -316,6 +398,24 @@ mod tests {
     use crate::compressor::GzipCompressor;
     use std::io::Cursor;
 
+    struct RuntimeControlReader {
+        inner: Cursor<Vec<u8>>,
+        controller: PipelineController,
+        changed: bool,
+    }
+
+    impl Read for RuntimeControlReader {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            let read = self.inner.read(buffer)?;
+            if read > 0 && !self.changed {
+                assert!(self.controller.update_chunk_size(64 * 1024));
+                assert!(self.controller.update_active_workers(1));
+                self.changed = true;
+            }
+            Ok(read)
+        }
+    }
+
     #[test]
     fn test_stream_mode_compression() {
         let original_data =
@@ -324,7 +424,7 @@ mod tests {
         let mut output_buffer = Vec::new();
 
         let compressor = GzipCompressor { level: 6 };
-        let (tx, _rx) = std::sync::mpsc::channel();
+        let (tx, rx) = std::sync::mpsc::channel();
         let controller = PipelineController::new(6);
         let result = compress_stream(
             &mut input_cursor,
@@ -350,5 +450,75 @@ mod tests {
             decompressed,
             "Decompressed stream mismatch"
         );
+
+        let events: Vec<_> = rx.try_iter().collect();
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, ProgressEvent::ChunkQueued { seq_num: 0, .. }))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, ProgressEvent::ChunkAssigned { seq_num: 0, .. }))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, ProgressEvent::ChunkPending { seq_num: 0, .. }))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, ProgressEvent::ChunkWritten { seq_num: 0 }))
+        );
+    }
+
+    #[test]
+    fn test_runtime_controls_preserve_stream_bytes_and_order() {
+        let original_data = b"runtime-controls-ordering".repeat(60_000);
+        let controller = PipelineController::new_with_workers(9, 4);
+        let mut input = RuntimeControlReader {
+            inner: Cursor::new(original_data.clone()),
+            controller: controller.clone(),
+            changed: false,
+        };
+        let mut output = Vec::new();
+        let compressor = GzipCompressor { level: 9 };
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        compress_stream(&mut input, &mut output, &compressor, 4, tx, &controller).unwrap();
+
+        let mut decoder = flate2::read::MultiGzDecoder::new(&output[..]);
+        let mut decompressed = Vec::new();
+        decoder.read_to_end(&mut decompressed).unwrap();
+        assert_eq!(decompressed, original_data);
+
+        let events: Vec<_> = rx.try_iter().collect();
+        let queued_sizes: Vec<usize> = events
+            .iter()
+            .filter_map(|event| match event {
+                ProgressEvent::ChunkQueued { bytes, .. } => Some(*bytes),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(queued_sizes.first(), Some(&(1024 * 1024)));
+        assert!(queued_sizes.iter().skip(1).any(|bytes| *bytes == 64 * 1024));
+
+        let written: Vec<u64> = events
+            .iter()
+            .filter_map(|event| match event {
+                ProgressEvent::ChunkWritten { seq_num } => Some(*seq_num),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(written, (0..written.len() as u64).collect::<Vec<_>>());
+        assert!(events.iter().any(|event| matches!(
+            event,
+            ProgressEvent::WorkerAvailability {
+                worker_id: 1..,
+                enabled: false
+            }
+        )));
     }
 }

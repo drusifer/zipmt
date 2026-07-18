@@ -1,26 +1,27 @@
 ---
 source: src/tui.rs
+assertion_line: 2719
 expression: clean_output
 ---
-ZIPMT PIPELINE CONTROLLER ══════════════════════════════════════ [STATUS: RUNNIN
-╭ Transporter Status ───────────────────╮╭ Ingest Speed History ───────────────╮
-│Sec 00: [███████████████] 100% (2.5x)  ││    9B ┼                            █│
-│Sec 01: [███████░░░░░░░░]  50% (2.5x)  ││       │                           ██│
-│Sec 02: [░░░░░░░░░░░░░░░]   0% (1.0x)  ││       │                          ▇██│
-│Sec 03: [███░░░░░░░░░░░░]  25% (2.5x)  ││       │                         ▆███│
-│                                       ││       │                        ▅████│
-│                                       ││       │                       ▄█████│
-│                                       ││       │                      ▃██████│
-│                                       ││       │                     ▂███████│
-╰───────────────────────────────────────╯╰─────────────────────────────────────╯
-╭ Log Messages (▲/▼) ── Knobs: P:4 C:0.1M Q:0 L:6 (avg:--) ────────────────────╮
-│                                                                              │
+ZIPMT PIPELINE CONTROLLER ════════════════════════════════════ [STATUS: RUNNING]
+╭ Composite + Slices S01-S03 of 4 (+1) ────────╮╭ I/O Flow [I] RATE MA10s ─────╮
+│TOTAL  44% 1/4 RATIO 2.50x ETA 2s             ││IN 0B/s │                     │
+│IN 175.0K / 400.0K  OUT 70.0K  ACTIVE 2       ││        │•                    │
+│S01 DONE [██████████████████] 100% 100.0K / 10││        │⡀                    │
+│    AVG 0B/s→0B/s  OUT 40.0K  R 2.5x          ││0       │•                    │
+│S02 RUN  [█████████░░░░░░░░░]  50% 50.0K / 100││        │                     │
+│    AVG 0B/s→0B/s  OUT 20.0K  R --            ││OUT 0B/s│                     │
+│S03 WAIT [░░░░░░░░░░░░░░░░░░]   0% 0B / 100.0K│╰──────────────────────────────╯
+│    AVG 0B/s→0B/s  OUT 0B  R --               │╭ Process ─────────────────────╮
+│                                              ││CPU --  RSS --                │
+╰──────────────────────────────────────────────╯╰──────────────────────────────╯
+╭ Log Messages (▲/▼) ── Knobs: P:4/4 C:0.1M Q:0 L:6 (avg:--) ──────────────────╮
 │                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-╭ Pipeline Controls ────────────────────────╮╭ Level ──────╮╭ Throttle ────╮    
-│CTRL: [P]Pause  [-/+]Slow/Speed            ││  9 ┼ ░      ││ 500 ┼ ░      │    
-│      [[]/[]]Lvl-/+  [Q]Abort/Exit         ││  6 ┼ █      ││   0 ┼ ░      │    
-│      [Tab]Cycle Focus Arrow Up/Down       ││  1 ┴ █      ││   0 ┴ ░      │    
-│      Click/Drag to adjust sliders         ││             ││              │    
-╰───────────────────────────────────────────╯╰─────────────╯╰──────────────╯
+╭ Pipeline Controls ───────╮╭ Level FIXE╮╭ Throttle ─╮╭ Partition ╮╭ Pool FIXED╮
+│[P]Pause [-/+]Throttle    ││           ││500 MAX ░  ││           ││           │
+│[PgUp/PgDn]Sectors [Q]Exit││ENCODER    ││        ░  ││PARTITION  ││POOL       │
+│[Tab]Throttle [↑/↓]Adjust ││LEVEL 6    ││        ░  ││1024K      ││4          │
+│[I]I/O mode Level/Part/Poo││FIXED      ││      0 █◀ ││FIXED      ││FIXED      │
+╰──────────────────────────╯╰───────────╯╰───────────╯╰───────────╯╰───────────╯

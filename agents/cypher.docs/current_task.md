@@ -1,18 +1,19 @@
 # Current Task
 
-**Status:** Completed
+**Status:** Completed / handed to Gate 1
 **Assigned to:** Cypher
-**Started:** 2026-07-15T16:41:45
-**Finished:** 2026-07-15T16:42:00
+**Started:** 2026-07-17T14:48:25-04:00
+**Finished:** 2026-07-17T14:51:00-04:00
 
 ## Task Description
-Draft user stories and acceptance criteria for the interactive TUI upgrade, pipeline decoupling, restored -T flag, and decoupled testing (R1-R5).
+Define Split-mode TUI uplift stories and acceptance criteria.
 
 ## Progress
-- [x] Load Cypher's state files (context.md, current_task.md, next_steps.md)
-- [x] Draft user stories R1-R5 in `docs/USER_STORIES_RATATUI_UPGRADE.md`
-- [x] Summarize work in DraftLCARSUpgradeStories_Summary_2026-07-15T16-42.md
-- [x] Update local context, current task, and next steps state files (SMP exit)
+- [x] Audited the existing Split snapshot and execution semantics.
+- [x] Defined aggregate progress and sector lifecycle requirements.
+- [x] Defined mirrored Split I/O history parity.
+- [x] Defined truthful fixed Partition/Pool controls.
+- [x] Defined responsive paging, layout, regression, and real-PTY gates.
 
 ## Blockers
 None
@@ -21,4 +22,4 @@ None
 None yet
 
 ---
-*Last updated: 2026-07-15T16:42:00*
+*Last updated: 2026-07-17T14:51:00-04:00*

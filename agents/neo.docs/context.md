@@ -3,6 +3,25 @@
 This file tracks the current state of code implementations and tech stacks maintained by the Software Engineer (Neo).
 
 ## Recent Decisions
+- **Smoothed worker rate and ETA over 10 chunks (2026-07-17)**: Each worker keeps 10 finalized input rates; an active assignment joins as the provisional newest sample, and the same average drives both AVG and ETA.
+- **Added per-worker ratio moving average (2026-07-17)**: Each Stream worker retains its last 10 finalized chunk ratios; the fixed-width average remains visible across assignments and adapts as chunks complete under new compression levels.
+- **Stabilized worker ratio and chart separation (2026-07-17)**: Worker progress now distinguishes final output, hides ratio during encoder buffering, and bounds the fixed final field; the native chart zero guide is a faint continuous Braille divider.
+- **Implemented native multi-series I/O chart (2026-07-17)**: Replaced the custom character matrix with Ratatui Chart datasets: signed cyan/yellow raw Braille lines, magenta MA10s lines, and muted dotted scatter guides on one mirrored scale.
+- **Fixed worker gauge percentage contrast (2026-07-17)**: Gauges now explicitly use cyan foreground and black background, allowing filled percentage labels to invert to black-on-cyan; a >50% rendered-cell test locks the behavior.
+- **Separated Stream gauges and stats (2026-07-17)**: Worker cards now put the one-cell progress gauge above an always-visible stats row; rate, ratio, ETA, and percent use fixed-width two-decimal formatting.
+- **Implemented compact Stream worker cards (2026-07-17)**: Each visible worker uses a three-row bordered card with identity/chunk in the title and a one-cell gauge labeled with fixed AVG, ratio, ETA, and percent fields.
+- **Implemented graph buckets and Stream worker board (2026-07-17)**: Graph history uses one-second buckets and MA10s; Stream worker assignment state exposes progress, average input rate, ratio, ETA, and retained DONE metrics.
+- **Implemented slice/system observability (2026-07-17)**: Slice lifetime averages freeze independently; composite ETA uses whole-job average throughput; both modes show fixed-cadence process CPU/RSS beneath the chart.
+- **Implemented bounded Split streaming (2026-07-17)**: Workers seek independent ranges and stream through 64 KiB buffers into destination-adjacent auto-cleaned temporary files; ordered concatenation is also buffered. Live temp output and final destination writes feed distinct truthful telemetry.
+- **Implemented persistent completion and smoothed I/O (2026-07-17)**: Successful interactive TUIs freeze final telemetry and wait for Enter/Q/Esc; automation exits. RATE uses a five-sample moving-average overlay and labels while CUMULATIVE remains exact.
+- **Implemented Split TUI uplift (2026-07-17)**: Typed Waiting/Running/Done events feed bounded aggregate helpers and shared I/O samples. Split renders a responsive one-based paged lifecycle board and mirrored chart; only Throttle is focusable, while Level/Partition/Pool are visibly fixed.
+- **Mirrored I/O chart implementation (2026-07-17)**: Stream TUI samples input/output at a fixed 100 ms cadence into one history containing bytes-per-second rates and cumulative totals. `I` toggles views without reset. The chart uses a shared mirrored scale; responsive rows are divided across body/logs/footer; knobs and mouse mappings use actual footer height.
+- **Responsive TUI geometry (2026-07-16)**: Terminals at or above 80x22 now use the full available canvas. The log panel absorbs extra height, stream/split bodies expand horizontally, header rules scale to preserve the complete status label, footer controls stay right-anchored, and mouse hit zones follow the resized footer.
+- **Pipeline Flow Phase 3 (2026-07-16)**: Stream mode uses the full dashboard body for labeled pipeline flow; overflow is explicit; four equal footer cards expose Level, Throttle, Chunk, and Workers. Focus order follows visual order, mouse maps all cards, and live controller values are visible.
+- **Pipeline Flow Phase 2 (2026-07-16)**: Added atomic power-of-two chunk sizing and fixed-pool active-worker eligibility. Reader block boundaries load the current size per future block; disabled workers never interrupt in-flight work and requeue untouched jobs on an eligibility race. A reader-done signal prevents sender clones from keeping workers alive after EOF.
+- **Pipeline Flow Phase 1 (2026-07-16)**: Added shared `DEFAULT_COMPRESSION_LEVEL = 9`, initial-level pipeline construction to eliminate the first-chunk race, typed chunk lifecycle events at reader/worker/writer authority points, and one `TuiState::apply_progress_event` reducer that keeps queue/worker/pending stages mutually exclusive.
+- **One-based chunk display correction (2026-07-16)**: Internal stream sequence IDs remain zero-based for ordering; every operator-facing queue, worker, pending, next, and gap label displays `seq + 1` and is covered by a focused render test.
+- **Fixed stdin-streaming TUI eligibility (2026-07-16)**: TUI rendering owns stderr, so eligibility now checks whether stderr is a terminal rather than requiring piped stdin and compression stdout to be terminals. `-T` therefore works with `cat input | zipmt-rust -T -o output -`; redirected stderr still safely falls back. Added a pure selector with four regression tests and made `--no-tui` an explicit override.
 - **Implemented LCARS Dashboard**: Added full-screen grids and rolling history sparkline graph.
 - **Implemented Dynamic Throttling**: Added keyboard control event listeners (`+`/`-`/`p`/`q`).
 - **Fixed Stream Crash & Added Centering**: Prevented `usize` subtraction underflows inside the progress bar rendering loops and added horizontal/vertical screen padding using crossterm size queries.
@@ -22,4 +41,4 @@ This file tracks the current state of code implementations and tech stacks maint
 - **CLI Opt-In TUI Bug Fix (R3)**: Resolved TUI defaulting issue. Made TUI strictly opt-in via `-T`/`--tui` with non-TTY/redirection override fallback to false, and environment override `ZIPMT_FORCE_TUI` to true. Updated integration tests to verify opt-in and override logic.
 
 ---
-*Last updated: 2026-07-15T21:20:00-04:00*
+*Last updated: 2026-07-17T14:21:00-04:00*

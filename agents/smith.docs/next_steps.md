@@ -1,13 +1,11 @@
 # Next Steps
 
-## Immediate Next Action
-- Wait for Mouse (@Mouse) to close the Decoupling & Interactive TUI Upgrade Sprint.
-
-## Waiting On
-- Mouse (@Mouse) for final sprint close.
-
-## Planned Work
-- Participate in final sprint retrospective review and prepare UX criteria for future sprints.
+- Preserve gauge/stats separation, fixed metric positions, and explicit overflow.
+- Preserve readable contrast across the full progress range.
+- Preserve graph series contrast and readable axis labels at minimum width.
+- Preserve the visual hierarchy between dotted guides and the center divider.
+- Preserve stable ratio placement while its ten-chunk average changes.
+- Preserve agreement between the displayed AVG rate and ETA behavior.
 
 ---
-*Last updated: 2026-07-15T21:40:00*
+*Last updated: 2026-07-17T22:39:00-04:00*

@@ -3,6 +3,22 @@
 This file tracks the current state of technical vision, architecture, and decisions made by the Tech Lead (Morpheus).
 
 ## Recent Decisions
+- **Approved native multi-series I/O chart (2026-07-17)**: User selected Ratatui Chart. One chart carries signed input/output raw series, signed MA10s series, and dotted scatter guides; existing telemetry cadence and calculations remain unchanged.
+- **Assessed btop-like I/O graph rendering (2026-07-17)**: Current graph is a low-resolution custom text matrix, not Ratatui Chart/Canvas. Recommend a dedicated Buffer-rendered Braille widget with stippled raw fill, dotted guides, distinct MA line, and block/TTY fallbacks; keep existing one-second samples and MA10s.
+- **Approved graph timebase and Stream worker projection (2026-07-17)**: Separate one-second graph cadence from 100 ms system sampling; scope worker metrics to assignment lifetimes and retain completed results.
+- **Approved slice/composite/system telemetry (2026-07-17)**: Separate short graph horizon, slice lifetime averages, and whole-job ETA; sample process telemetry on the existing cadence and share its panel across modes.
+- **Approved bounded Split storage (2026-07-17)**: Use per-worker seeked ranges, 64 KiB buffers, destination-adjacent temporary compressed sections, and ordered buffered concatenation. Application memory is independent of file size.
+- **Approved persistent completion and MA5 projection (2026-07-17)**: Freeze successful final state, hold only genuine interactive sessions, preserve automation exit, and smooth RATE presentation without changing raw samples or cumulative totals.
+- **Approved final Split TUI uplift (2026-07-17)**: Lifecycle authority, bounded aggregates, completed-only ratio, TUI-local mirrored samples, responsive paging, and fixed-control semantics match architecture. Review corrected page size to exactly match rendered capacity.
+- **Approved Split TUI uplift sprint plan (2026-07-17)**: Three phases correctly sequence authoritative state, responsive presentation, and truthful controls/real PTY validation across nine bounded tasks.
+- **Split TUI uplift architecture (2026-07-17)**: Add explicit Waiting/Running/Done sector events and a centralized reducer; derive aggregate progress and completed-sector-only ratio; reuse mirrored I/O samples by mode; page sectors from live geometry. Split Level is ENCODER FIXED because compressors load it once at encoder creation; Chunk and Workers are also fixed, while Pause/Throttle remain live.
+- **Approved mirrored I/O chart Phase 1 (2026-07-17)**: Implementation keeps one TUI-local sample buffer with rate and total fields, fixed-cadence updates, pure shared-scale mirrored rendering, and geometry-driven knobs/mouse mapping. No pipeline synchronization, ordering, or format behavior changes.
+- **Approved I/O chart sprint plan (2026-07-16)**: One three-task phase maps directly to state/sampling, mirrored rendering, and responsive knob geometry, with bounded correctness and mandatory real-PTY UX gates.
+- **I/O chart follow-on architecture (2026-07-16)**: Store rate deltas and cumulative totals together in fixed-cadence `IoSample` history so `I` toggles modes without reset. Use a shared mirrored scale, horizontally pair stream flow and chart, distribute extra rows across body/logs/footer, and derive knob rendering plus mouse interpolation from actual footer geometry.
+- **Approved Pipeline Flow Phase 3 and responsive extension (2026-07-16)**: Full-canvas geometry preserves the 80x22 contract while expanding logs and horizontal panels on larger terminals. Footer cards and mouse zones share right-anchored terminal-relative geometry. Final review replaced a RUNNING-specific header constant with actual-status width calculation, preserving RUNNING, PAUSED, and COMPLETE labels.
+- **Approved Pipeline Flow Phase 2 (2026-07-16)**: Atomic controls and validation match architecture. Fixed-pool worker gating plus reader-done termination safely handles dynamic eligibility without thread respawn or output-order changes.
+- **Approved Pipeline Flow Phase 1 (2026-07-16)**: Lifecycle events originate at authoritative transitions; TUI reduction is centralized; internal zero-based ordering is separated from one-based display; the shared level-9 default is race-free and documented. Review required one help-text correction after Trin's one display correction.
+- **Pipeline Flow architecture (2026-07-16)**: Use explicit chunk lifecycle `ProgressEvent` variants and a single TUI reducer; preserve BTreeMap sequence ordering; add atomic 64 KiB–8 MiB chunk size and 1..max active-worker controls; gate a fixed worker pool rather than respawning threads; centralize compression default at level 9.
 - **Designed LCARS Full-Screen Architecture**: Created `docs/ARCH_LCARS.md`.
 - **Approved Ratatui Migration Architecture**: Drafted combined user stories and technical architecture for the `ratatui` migration in `docs/USER_STORIES_RATATUI.md` with Cypher.
 - **Approved Phase 1 of Ratatui Migration**: Reviewed the `ratatui` dependency addition, removal of the `-T`/`--tui` CLI flag, TTY fallback/auto-redirection detection, and alternate screen raw mode setup in `main.rs` and `tui.rs`.
@@ -14,4 +30,4 @@ This file tracks the current state of technical vision, architecture, and decisi
 - **Approved Decoupling & LCARS Interactive Implementation**: Audited implementation of R1-R5, verified thread-safe modular pipeline library separation, correct TUI event loop polling with channel data rendering, responsive interactive sliders with mouse and tab-focus support, and decoupled TestBackend snapshots. All tests pass cleanly.
 
 ---
-*Last updated: 2026-07-15T21:35:00*
+*Last updated: 2026-07-17T15:18:00-04:00*

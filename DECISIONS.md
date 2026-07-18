@@ -152,3 +152,213 @@ This document records the key architectural and design decisions made during the
 - **Consequences:**
   - Restores traditional command line UX.
   - Avoids corrupting stdout when `-T` is omitted during pipes.
+
+---
+
+## 13. Decision: Authoritative Chunk Lifecycle Events and One-Based Projection
+- **Date:** 2026-07-16
+- **Status:** Approved
+- **Context:** Operators need to follow individual stream chunks through input queuing, worker assignment, pending output sorting, and ordered writing without coupling the TUI to pipeline internals.
+- **Decision:** Emit typed lifecycle events at the reader, worker, and writer transition points, and reduce them through one `TuiState` event handler. Keep sequence IDs zero-based internally but display every chunk as one-based `#N`.
+- **Rationale:** Authoritative events prevent contradictory stage displays, while the projection boundary preserves ordering math and presents operator-friendly identities.
+- **Consequences:**
+  - A chunk is projected in only one lifecycle stage at a time.
+  - Output ordering remains unchanged and byte-safe.
+  - New frontends can consume the same event vocabulary.
+
+---
+
+## 14. Decision: Future-Only Chunk Sizing and Fixed-Pool Worker Gating
+- **Date:** 2026-07-16
+- **Status:** Approved
+- **Context:** Chunk size and concurrency must be adjustable during streaming without interrupting in-flight compression or destabilizing worker identity and output order.
+- **Decision:** Store validated chunk size and active-worker count in atomics. The reader loads chunk size before each future block; a fixed startup worker pool checks eligibility before accepting new work, while already-running chunks finish normally.
+- **Rationale:** Future-only application gives controls predictable boundaries. Fixed-pool gating avoids thread churn and preserves stable worker slots in the TUI.
+- **Consequences:**
+  - Chunk size is restricted to powers of two from 64 KiB through 8 MiB.
+  - Active workers are restricted to 1 through the startup pool maximum.
+  - Mid-stream changes preserve byte-perfect decompression and ordered output.
+
+---
+
+## 15. Decision: Full-Canvas Responsive TUI with a Stable Minimum Contract
+- **Date:** 2026-07-16
+- **Status:** Approved
+- **Context:** A fixed centered 80x22 dashboard wastes larger terminals, but the minimum layout and mouse controls must remain deterministic.
+- **Decision:** Treat 80x22 as the minimum contract and use the complete canvas above that size. Extra rows expand logs, body panels scale horizontally, status rules derive from actual label width, and the four fixed-width control cards and mouse targets remain anchored to the right/bottom edges.
+- **Rationale:** Operators gain useful information density on larger terminals without learning a different layout or losing minimum-size compatibility.
+- **Consequences:**
+  - Existing 80-column snapshots remain stable.
+  - Larger terminals expose more logs and stage separation.
+  - RUNNING, PAUSED, and COMPLETE remain fully visible at minimum width.
+
+---
+
+## 16. Decision: Dual-mode Mirrored I/O History
+- **Date:** 2026-07-17
+- **Status:** Approved
+- **Context:** Stream operators need smooth short-term I/O motion and session-total growth without losing lifecycle visibility or restarting telemetry when changing views.
+- **Decision:** Sample existing cumulative input/output counters on a fixed 100 ms cadence into records containing both normalized bytes-per-second rates and cumulative totals. Render input above and output below one shared baseline/scale; `I` switches RATE/CUMULATIVE projections without clearing history.
+- **Rationale:** One sample buffer keeps both views temporally aligned, fixed cadence avoids event-driven distortion, and shared scaling makes input/output magnitude comparable.
+- **Consequences:**
+  - The feature is isolated to TUI state and rendering.
+  - Larger terminals expose more chart history and taller controls.
+  - Compression synchronization, ordering, and file formats are unchanged.
+
+---
+
+## 17. Decision: Split Lifecycle Projection and Truthful Fixed Controls
+- **Date:** 2026-07-17
+- **Status:** Approved
+- **Context:** Split mode exposed zero-based progress rows and controls that appeared live even though partitions, Rayon pool size, and encoder level are fixed when work starts.
+- **Decision:** Emit typed Waiting/Running/Done events at authoritative Split transitions and reduce them into a bounded aggregate plus one-based paged sector board. Reuse the mirrored I/O history with aggregate Split counters. Present Level as encoder-fixed, Chunk as partition-fixed, and Workers as pool-fixed; only Pause and Throttle remain live.
+- **Rationale:** Explicit lifecycle and completed-sector-only ratio provide trustworthy status, while removing false affordances prevents operators from believing startup topology changed.
+- **Consequences:**
+  - Split paging derives from the same responsive row capacity used by rendering.
+  - Aggregate output and ratio advance only when sector output is authoritative.
+  - Rayon execution, sequential output assembly, compressor semantics, and file format remain unchanged.
+
+---
+
+## 18. Decision: Persistent Completion Dashboard and Smoothed Rate Projection
+- **Date:** 2026-07-17
+- **Status:** Approved
+- **Context:** Successful jobs immediately closed the TUI, hiding final results, while instantaneous 100 ms rate labels jumped too aggressively for comfortable reading.
+- **Decision:** Freeze elapsed time and telemetry on successful completion, retain the interactive dashboard until Enter/Q/Esc, and show final bytes, ratio, and average throughput. In RATE mode, overlay a five-sample moving average and use its latest values for IN/OUT labels; preserve exact CUMULATIVE totals and raw stored samples.
+- **Consequences:**
+  - Interactive users can inspect final results without racing terminal teardown.
+  - `ZIPMT_FORCE_TUI=1` automation renders completion but exits without waiting.
+  - Smoothing changes presentation only, not sampling cadence or compression behavior.
+
+---
+
+## 19. Decision: Seeked Split Ranges with Temporary Compressed Sections
+- **Date:** 2026-07-17
+- **Status:** Approved
+- **Context:** Split mode loaded the entire source and retained every compressed slice in RAM, making memory proportional to file size.
+- **Decision:** Derive ranges from file metadata. Each worker independently opens and seeks the source, reads its bounded range through a 64 KiB buffer, and compresses directly to an auto-cleaned temporary file. After all workers finish, concatenate temporary streams in range order through a fixed buffer.
+- **Consequences:**
+  - Application memory is O(workers × fixed buffers), not O(input + output).
+  - Encoder-to-temp output is visible during RUN.
+  - Final destination writes are added to total output I/O, while compression ratio uses compressed-section bytes only.
+  - Temporary sections are removed automatically when their handles drop.
+
+---
+
+## 20. Decision: Slice-local Averages, Composite ETA, and Shared Process Telemetry
+- **Date:** 2026-07-17
+- **Status:** Approved
+- **Decision:** Record authoritative start/completion instants in each TUI slice projection. Show per-slice average input/output throughput and ratio, and calculate composite ETA from total processed bytes over whole-job elapsed time rather than the latest 100 ms sample. Sample process CPU ticks and RSS on the fixed telemetry cadence and render one shared Process panel in both modes.
+- **Consequences:**
+  - Slice metrics freeze independently at completion.
+  - ETA is stable across short encoder flushes and concatenation bursts.
+  - Linux reports process CPU/RSS from `/proc`; unsupported platforms show `--`.
+  - CPU may exceed 100% when the process consumes multiple cores.
+
+---
+
+## 21. Decision: One-second Graph Buckets and Ten-second Rate Smoothing
+- **Date:** 2026-07-17
+- **Status:** Approved
+- **Decision:** Decouple graph sampling from the 100 ms UI/process telemetry tick. Emit one normalized I/O history bucket per second and calculate the RATE overlay and axis labels from the latest ten buckets.
+- **Consequences:**
+  - Every horizontal graph step represents approximately one second.
+  - `◆MA10s` has a stable, explicit ten-second horizon.
+  - Cumulative totals, final statistics, CPU/RSS cadence, and compression events remain unchanged.
+
+---
+
+## 22. Decision: Stream Worker-local Progress Projection
+- **Date:** 2026-07-17
+- **Status:** Approved
+- **Decision:** Emit worker/chunk progress from Stream compressor callbacks, retain per-assignment timing and bytes in `WorkerState`, and render a responsive worker board with one-based chunk, lifecycle, percentage, average input rate, ratio, ETA, and explicit overflow.
+- **Consequences:**
+  - Worker metrics remain visible as DONE after the worker returns idle.
+  - Small terminals show a bounded worker range; larger terminals expose more rows.
+  - Stream ordering, queues, compression buffers, and worker gating remain unchanged.
+
+---
+
+## 23. Decision: Compact Stream Worker Cards
+- **Date:** 2026-07-17
+- **Status:** Approved
+- **Decision:** Render each visible Stream worker in a three-row bordered card. Put identity, lifecycle, and chunk in the title; use the single interior row as a progress gauge with fixed average-rate, ratio, ETA, and percentage fields.
+- **Consequences:**
+  - The minimum 80x22 dashboard retains two complete worker cards.
+  - Taller terminals add cards in deterministic three-row increments.
+  - Gauge fill supplies progress without shifting worker-specific statistics.
+
+---
+
+## 24. Decision: Separate Worker Gauge and Fixed-point Statistics
+- **Date:** 2026-07-17
+- **Status:** Approved
+- **Decision:** Reserve the first card row for the progress gauge and the second for always-visible statistics. Format progress, rate, ratio, and ETA to two decimal places with fixed field widths.
+- **Consequences:**
+  - Gauge fill can no longer obscure or recolor worker statistics.
+  - Values update in place without changing neighboring field positions.
+  - Four-row cards trade minimum-terminal density for clearer telemetry.
+
+---
+
+## 25. Decision: Explicit Gauge Contrast Pair
+- **Date:** 2026-07-17
+- **Status:** Approved
+- **Decision:** Give Stream worker gauges an explicit cyan foreground and black background so Ratatui inverts percentage labels to black-on-cyan beneath the filled region.
+- **Consequences:**
+  - Percentage text remains readable above and below 50% progress.
+  - A rendered-cell regression test verifies the filled-label foreground and background colors.
+
+---
+
+## 26. Decision: Native Multi-series Ratatui I/O Chart
+- **Date:** 2026-07-17
+- **Status:** Approved
+- **Decision:** Replace the custom block/diamond text renderer with one native Ratatui `Chart`. Plot input as positive cyan Braille lines, output as negative yellow Braille lines, MA10s as magenta Braille lines, and dotted guides as muted scatter datasets.
+- **Consequences:**
+  - Stream and Split share one native multi-series renderer and shared mirrored scale.
+  - Braille provides 2x4 sub-cell resolution without a second stacked chart.
+  - The existing one-second buckets, cumulative values, and MA10s calculations are unchanged.
+
+---
+
+## 27. Decision: Final-only Worker Compression Ratio
+- **Date:** 2026-07-17
+- **Status:** Approved
+- **Decision:** Add an explicit `finalized` bit to worker progress. Keep ratio unavailable while the encoder may be buffering, then show the exact final ratio in a six-character, two-decimal field capped with `>99.99`.
+- **Consequences:**
+  - Header-only intermediate output can no longer create giant transient ratios.
+  - Worker progress and ETA remain live.
+  - The ratio column never shifts neighboring fields.
+
+---
+
+## 28. Decision: Native Zero-line I/O Divider
+- **Date:** 2026-07-17
+- **Status:** Approved
+- **Decision:** Draw the native Chart zero guide as a faint continuous Braille line, with the ±50% guides remaining dotted scatter series.
+- **Consequences:**
+  - Input and output halves read as distinct plots without separate chart axes.
+  - All graph layers remain native Chart datasets.
+
+---
+
+## 29. Decision: Per-worker Ten-chunk Ratio Average
+- **Date:** 2026-07-17
+- **Status:** Approved
+- **Decision:** Each Stream worker retains a rolling window of its last 10 finalized chunk compression ratios. Display the arithmetic mean during later assignments and append only authoritative final encoder results.
+- **Consequences:**
+  - `R` remains visible instead of resetting to `--.--` for every new chunk.
+  - Compression-level changes affect the average as newly configured chunks complete.
+  - Partial buffered output cannot distort the ratio.
+
+---
+
+## 30. Decision: Ten-chunk Worker Throughput and ETA Average
+- **Date:** 2026-07-17
+- **Status:** Approved
+- **Decision:** Retain each worker's last 10 finalized input rates. While active, combine its live assignment rate with up to nine finalized rates; while idle, use finalized history only. Drive `AVG` and worker ETA from this same smoothed rate.
+- **Consequences:**
+  - Rate and ETA remain responsive without following every callback fluctuation.
+  - All worker averages share a bounded 10-chunk horizon.
+  - Assignment resets do not erase worker performance history.

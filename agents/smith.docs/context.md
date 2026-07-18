@@ -3,6 +3,16 @@
 This file tracks the HCI evaluations, gate reviews, and usability criteria maintained by the HCI Expert (Smith).
 
 ## Recent Decisions
+- **Approved completion/smoothed I/O real UX (2026-07-17)**: Actual 80x22/120x30 sessions retain COMPLETE with final stats and close guidance; RATE exposes its MA5 overlay and stable labels.
+- **Approved real Split TUI uplift UX (2026-07-17)**: Actual 80x22 and 120x30 Split runs show readable aggregate/lifecycle state, explicit range/overflow, mirrored chart parity, larger-terminal expansion, and honest fixed Level/Partition/Pool presentation.
+- **Approved Split TUI uplift architecture (2026-07-17)**: Typed sector stages, completed-only ratio, rate-gated ETA, responsive range/overflow paging, and shared mirrored chart provide truthful visibility. Split Level/Partition/Pool remain visible but fixed and absent from focus/input; Pause/Throttle remain live.
+- **Approved Split TUI uplift stories (2026-07-17)**: Aggregate status, one-based WAIT/RUN/DONE sectors, mirrored I/O parity, explicit overflow/paging, and visibly fixed Partition/Pool controls address current status visibility and false-affordance problems. Fixed controls must remain in visual order but be skipped by focus/input.
+- **Approved real I/O chart UX (2026-07-17)**: Actual 80x22 and 120x30 PTY streams show smooth right-to-left history motion, clearly mirrored input/output, honest `/s` rate units, live `I` switching to CUMULATIVE and back without reset, preserved lifecycle labels, and expanded readable gauges.
+- **Approved combined I/O chart plan (2026-07-16)**: Mirrored input/output orientation, a visible `I` mode toggle, shared scaling, fixed-cadence history, and height-driven knobs satisfy system visibility and user control. Required RATE values to normalize deltas to bytes per second and show `/s`, while CUMULATIVE displays session totals.
+- **Approved responsive Phase 3 UX (2026-07-16)**: The corrected 80-column header shows the complete RUNNING state, while terminals above 80x22 use their full canvas. Larger widths improve stage separation, larger heights expose more logs, and the four controls remain consistently right-anchored with matching mouse geometry.
+- **Phase 3 real PTY test (2026-07-16)**: Flow stages and four controls match the approved mental model and are readable without relying on color. The discovered header truncation defect was corrected and regression-locked.
+- **Approved Pipeline Flow architecture (2026-07-16)**: Typed stage events, fixed-pool worker gating, future-read chunk sizing, and four-card controls preserve visibility and user control. Any control not applicable to an in-flight split partition must be visibly labeled rather than appearing live.
+- **Approved Pipeline Flow stories with guardrails (2026-07-16)**: Queue stages must read Input → Workers → Pending Sort → Output Ready, display stable one-based `#N` identities, use textual states rather than color alone, expose all four knobs in visual focus order, and collapse overflow explicitly on small terminals.
 - **Approved Interactive LCARS Sliders & Decoupled Usability (2026-07-15)**: Usability testing completed. Verified interactive sliders navigation (Tab focus) and keyboard/mouse adjustment. Confirming that focus visual highlights (different border colors for selected widgets) and sliders rendering (vertical bars) provide excellent system feedback (Heuristic 1) and user control (Heuristic 3).
 - **Gate 1 & 2 Combined Approval for Interactive TUI & Decoupled Pipeline (2026-07-15)**: Reviewed and approved stories and architecture in `docs/USER_STORIES_RATATUI_UPGRADE.md`, confirming compliance of modular pipeline, `PipelineController`, vertical sliders, and snapshot test mocks with HCI principles.
 - **Gate 1 & 2 Combined Approval for TUI Defaulting & Fallbacks (2026-07-15)**: Reviewed and approved Story 3 and Section 3 of `docs/USER_STORIES_RATATUI.md` under HCI principles (consistency, error prevention), ensuring robust defaulting and redirection checks to prevent data corruption.
@@ -21,4 +31,4 @@ This file tracks the HCI evaluations, gate reviews, and usability criteria maint
 - **Heuristic 8 (Aesthetic & Minimalist Design)**: Centered layout logic (constrained to 80x15 viewport) looks stunning on any terminal size and avoids visual noise, organizing blocks via structured boundaries and unified labels.
 
 ---
-*Last updated: 2026-07-15T21:40:00*
+*Last updated: 2026-07-17T15:20:00-04:00*

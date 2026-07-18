@@ -18,7 +18,7 @@ endif
 
 # ── Bob Protocol Targets ─────────────────────────────────────────────────────
 
-.PHONY: tldr test test-rust build-rust via_index install_bob update_bob pull_bob clean_bob diff_bob
+.PHONY: tldr test test-rust format-rust rust-format-check rust-clippy rust-complexity rust-cyclomatic rust-dead-code rust-quality rust-audit rust-unsafe rust-miri rust-memcheck rust-profile rust-bloat rust-quality-full rust-tools-check rust-tools-install build-rust build-rust-debug via_index install_bob update_bob pull_bob clean_bob diff_bob
 
 tldr: ## Show TL;DR summaries from all project files (quick orientation for agents)
 	@rg --no-heading "TLDR:" --glob "*.md" -N | sed 's|^\./||' | sort
@@ -27,10 +27,79 @@ test: ## Run unit tests
 	@python -m unittest discover -s tests
 
 test-rust: ## Run Rust unit tests
-	@cd zipmt-rust && cargo test
+	@cd zipmt-rust && cargo test $(ARGS)
+
+format-rust: ## Format Rust sources
+	@cd zipmt-rust && cargo fmt
+
+rust-format-check: ## Check Rust formatting without changing files
+	@cd zipmt-rust && cargo fmt --all -- --check
+
+rust-clippy: ## Run strict Rust correctness, quality, and performance lints
+	@cd zipmt-rust && cargo clippy --all-targets --all-features -- -D warnings
+
+rust-complexity: ## Enforce Clippy cognitive-complexity limits
+	@cd zipmt-rust && cargo clippy --all-targets --all-features -- -D clippy::cognitive_complexity
+
+rust-cyclomatic: ## Export cyclomatic, cognitive, Halstead, and maintainability metrics
+	@command -v rust-code-analysis-cli >/dev/null || { echo "missing rust-code-analysis-cli; run: make rust-tools-install"; exit 2; }
+	@mkdir -p build
+	@rust-code-analysis-cli -m -p zipmt-rust/src --pr -O json > build/rust-code-metrics.json
+	@echo "metrics written to build/rust-code-metrics.json"
+
+rust-dead-code: ## Reject dead Rust code, unused imports, and unused variables
+	@cd zipmt-rust && RUSTFLAGS="-D dead_code -D unused_imports -D unused_variables" cargo check --all-targets --all-features
+
+rust-quality: rust-format-check rust-clippy rust-complexity rust-cyclomatic rust-dead-code ## Run core formatter, bug, quality, complexity, and dead-code gates
+
+rust-audit: ## Scan Rust dependencies for advisories, license, bans, and source policy
+	@command -v cargo-audit >/dev/null || { echo "missing cargo-audit; run: make rust-tools-install"; exit 2; }
+	@command -v cargo-deny >/dev/null || { echo "missing cargo-deny; run: make rust-tools-install"; exit 2; }
+	@cd zipmt-rust && cargo audit
+	@cd zipmt-rust && cargo deny check
+
+rust-unsafe: ## Report unsafe usage in the Rust dependency graph
+	@command -v cargo-geiger >/dev/null || { echo "missing cargo-geiger; run: make rust-tools-install"; exit 2; }
+	@cd zipmt-rust && cargo geiger --all-features
+
+rust-miri: ## Run Rust tests under Miri UB and leak detection (nightly)
+	@rustup run nightly cargo miri --version >/dev/null 2>&1 || { echo "missing nightly Miri; run: rustup toolchain install nightly --component miri"; exit 2; }
+	@cd zipmt-rust && cargo +nightly miri test $(MIRI_ARGS)
+
+rust-memcheck: ## Run the debug binary under Valgrind (set MEMCHECK_ARGS)
+	@command -v valgrind >/dev/null || { echo "missing valgrind; install it with the system package manager"; exit 2; }
+	@[ -n "$(MEMCHECK_ARGS)" ] || { echo 'usage: make rust-memcheck MEMCHECK_ARGS="-o /tmp/out.xz /path/to/input"'; exit 2; }
+	@cd zipmt-rust && cargo build
+	@cd zipmt-rust && valgrind --tool=memcheck --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=2 target/debug/zipmt-rust $(MEMCHECK_ARGS)
+
+rust-profile: ## Generate build/flamegraph.svg (set PROFILE_ARGS)
+	@command -v cargo-flamegraph >/dev/null || { echo "missing cargo-flamegraph; run: make rust-tools-install"; exit 2; }
+	@[ -n "$(PROFILE_ARGS)" ] || { echo 'usage: make rust-profile PROFILE_ARGS="-o /tmp/out.xz /path/to/input"'; exit 2; }
+	@mkdir -p build
+	@cd zipmt-rust && cargo flamegraph --release --bin zipmt-rust --output ../build/flamegraph.svg -- $(PROFILE_ARGS)
+
+rust-bloat: ## Report release binary size by crate
+	@command -v cargo-bloat >/dev/null || { echo "missing cargo-bloat; run: make rust-tools-install"; exit 2; }
+	@cd zipmt-rust && cargo bloat --release --crates
+
+rust-quality-full: rust-quality rust-audit rust-unsafe rust-bloat ## Run core and optional Rust quality/security analysis
+
+rust-tools-check: ## Show availability of optional Rust analysis tools
+	@for tool in rust-code-analysis-cli cargo-audit cargo-deny cargo-geiger cargo-bloat cargo-flamegraph valgrind perf; do \
+		if command -v $$tool >/dev/null; then printf "%-20s installed\n" $$tool; else printf "%-20s MISSING\n" $$tool; fi; \
+	done
+	@if rustup run nightly cargo miri --version >/dev/null 2>&1; then echo "miri                installed"; else echo "miri                MISSING"; fi
+
+rust-tools-install: ## Install Cargo-based Rust audit, unsafe, size, and profiling tools
+	@cargo install --locked rust-code-analysis-cli cargo-audit cargo-deny cargo-geiger cargo-bloat flamegraph
+	@echo "Optional system tools: install valgrind and perf with your OS package manager."
+	@echo "Optional Miri: rustup toolchain install nightly --component miri"
 
 build-rust: ## Build Rust release binary
 	@cd zipmt-rust && cargo build --release
+
+build-rust-debug: ## Build Rust debug binary for local PTY testing
+	@cd zipmt-rust && cargo build
 
 via_index: ## Build the via index required by the via MCP server
 	@via index "$(CURDIR)"
@@ -170,7 +239,7 @@ else
 #   make tldr V=-vv        stderr + filtered failures to terminal
 #   make tldr V=-vvv       stderr + full stdout to terminal
 
-.PHONY: help chat test test-rust build-rust via_index install_bob update_bob pull_bob clean_bob diff_bob
+.PHONY: help chat test test-rust format-rust rust-format-check rust-clippy rust-complexity rust-cyclomatic rust-dead-code rust-quality rust-audit rust-unsafe rust-miri rust-memcheck rust-profile rust-bloat rust-quality-full rust-tools-check rust-tools-install build-rust build-rust-debug via_index install_bob update_bob pull_bob clean_bob diff_bob
 
 install_bob: ## Copy agents into a project and set up skill links (usage: make install_bob TARGET=/path/to/project)
 	@$(MAKE) MKF_ACTIVE=1 install_bob TARGET="$(TARGET)"
@@ -225,7 +294,58 @@ test: ## Run unit tests
 test-rust: ## Run Rust unit tests
 	@./agents/tools/mkf.py $(V) $@
 
+format-rust: ## Format Rust sources
+	@./agents/tools/mkf.py $(V) $@
+
+rust-format-check: ## Check Rust formatting without changing files
+	@./agents/tools/mkf.py $(V) $@
+
+rust-clippy: ## Run strict Rust correctness, quality, and performance lints
+	@./agents/tools/mkf.py $(V) $@
+
+rust-complexity: ## Enforce Clippy cognitive-complexity limits
+	@./agents/tools/mkf.py $(V) $@
+
+rust-cyclomatic: ## Export cyclomatic, cognitive, Halstead, and maintainability metrics
+	@./agents/tools/mkf.py $(V) $@
+
+rust-dead-code: ## Reject dead Rust code, unused imports, and unused variables
+	@./agents/tools/mkf.py $(V) $@
+
+rust-quality: ## Run core formatter, bug, quality, complexity, and dead-code gates
+	@./agents/tools/mkf.py $(V) $@
+
+rust-audit: ## Scan Rust dependencies for advisories, license, bans, and source policy
+	@./agents/tools/mkf.py $(V) $@
+
+rust-unsafe: ## Report unsafe usage in the Rust dependency graph
+	@./agents/tools/mkf.py $(V) $@
+
+rust-miri: ## Run Rust tests under Miri UB and leak detection (nightly)
+	@./agents/tools/mkf.py $(V) $@
+
+rust-memcheck: ## Run the debug binary under Valgrind (set MEMCHECK_ARGS)
+	@./agents/tools/mkf.py $(V) $@
+
+rust-profile: ## Generate build/flamegraph.svg (set PROFILE_ARGS)
+	@./agents/tools/mkf.py $(V) $@
+
+rust-bloat: ## Report release binary size by crate
+	@./agents/tools/mkf.py $(V) $@
+
+rust-quality-full: ## Run core and optional Rust quality/security analysis
+	@./agents/tools/mkf.py $(V) $@
+
+rust-tools-check: ## Show availability of optional Rust analysis tools
+	@./agents/tools/mkf.py $(V) $@
+
+rust-tools-install: ## Install Cargo-based Rust audit, unsafe, size, and profiling tools
+	@./agents/tools/mkf.py $(V) $@
+
 build-rust: ## Build Rust release binary
+	@./agents/tools/mkf.py $(V) $@
+
+build-rust-debug: ## Build Rust debug binary for local PTY testing
 	@./agents/tools/mkf.py $(V) $@
 
 via_index: ## Build the via index required by the via MCP server

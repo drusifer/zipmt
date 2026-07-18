@@ -138,6 +138,160 @@ This document indexes critical lessons learned during the development, compilati
 - **The Solution:** Calculate the absolute centering offset based on terminal size, check if the clicked mouse event falls inside the bounding box of the vertical sliders, and map the row offset directly to the target scale.
 - **The Rule:** Capturing mouse interaction in a centered terminal dashboard requires checking if mouse events fall inside dynamic coordinate bounding boxes offset by padding.
 
+---
 
+## 14. Lesson: Emit UI Lifecycle Events Only at State Authority Points
+- **Date:** 2026-07-16
+- > **Tags:** #Concurrency #Observability #StateMachines #Rust
+- **Context:** Showing the same chunk across an input queue, worker slot, pending sorter, and output-ready indicator can easily produce stale or duplicate UI state.
+- **The Issue:** Inferring transitions from aggregate counters cannot reliably identify where a particular chunk currently resides.
+- **The Solution:** Emit queued events from the reader, assigned/pending events from workers, and written events from the ordered writer, then update all visible stages in one reducer.
+- **The Rule:** For concurrent pipeline observability, event producers must be the owners of the transition and the UI must have one projection reducer.
 
+---
 
+## 15. Lesson: Runtime Concurrency Controls Need Future-Work Semantics
+- **Date:** 2026-07-16
+- > **Tags:** #Concurrency #RuntimeControls #Compression #Safety
+- **Context:** Users expect chunk-size and worker-count knobs to react live, but stopping or repartitioning in-flight work risks lost jobs and corrupt ordering.
+- **The Issue:** Immediate mutation of active work makes control behavior nondeterministic and complicates safe rollback.
+- **The Solution:** Apply chunk sizing when the reader begins the next block and worker gating before a worker accepts its next job. Let all in-flight chunks finish.
+- **The Rule:** Live pipeline knobs should affect future work at explicit boundaries unless interruption semantics are intentionally designed and tested.
+
+---
+
+## 16. Lesson: Responsive TUIs Need Shared Render and Input Geometry
+- **Date:** 2026-07-16
+- > **Tags:** #TUI #ResponsiveDesign #MouseCapture #Testing
+- **Context:** Expanding a fixed dashboard to fill larger terminals changes both widget placement and interactive hit zones.
+- **The Issue:** Scaling only the renderer leaves mouse controls pointing at obsolete centered coordinates; fixed decorative widths can also truncate variable status labels.
+- **The Solution:** Anchor render cards and mouse ranges from the same terminal edges, derive flexible widths from actual strings, and test the minimum size plus at least one larger terminal.
+- **The Rule:** Responsive terminal layout and input geometry are one feature and must be derived from the same constraints.
+
+---
+
+## 17. Lesson: Telemetry Sampling Cadence Must Be Independent of Input Events
+- **Date:** 2026-07-17
+- > **Tags:** #TUI #Telemetry #Sampling #Visualization
+- **Context:** A scrolling chart shares an event loop with keyboard, mouse, resize, and progress events.
+- **The Issue:** Sampling once per loop iteration makes graph density and reported rates change when the user moves the mouse or presses keys.
+- **The Solution:** Gate telemetry on elapsed wall time, normalize counter deltas by actual duration, and store rate plus cumulative values in the same record.
+- **The Rule:** Interactive event frequency must never determine telemetry sampling frequency or units.
+
+---
+
+## 18. Lesson: Observability Controls Must Match Their Application Boundary
+- **Date:** 2026-07-17
+- > **Tags:** #TUI #Concurrency #Affordances #SplitMode
+- **Context:** A shared control footer can imply that every setting applies equally to streaming and pre-partitioned parallel work.
+- **The Issue:** Split partitions and the Rayon pool are created at startup, and compressor level is loaded when each encoder is created. Leaving those cards interactive creates false feedback without changing active work.
+- **The Solution:** Audit where each setting is consumed, keep fixed settings visible for context, label their boundary explicitly, and exclude them from focus, keyboard, and pointer adjustment in modes where they cannot apply.
+- **The Rule:** A runtime control is live only when the engine reads it at a documented future-work boundary; otherwise render it as fixed and remove its interaction affordances.
+
+---
+
+## 19. Lesson: Completion Holds Need an Automation Escape Hatch
+- **Date:** 2026-07-17
+- > **Tags:** #TUI #Automation #Completion #Telemetry
+- **Context:** Keeping a successful interactive dashboard open is useful to people but can deadlock forced-TUI integration tests that have no operator to dismiss it.
+- **The Solution:** Hold only genuine interactive sessions, retain an explicit automation override that renders completion once and exits, and freeze telemetry so the final moving average does not decay through appended zero samples.
+- **The Rule:** Persistent terminal completion states must distinguish interactive ownership from automated rendering and must freeze their final measurement window.
+
+---
+
+## 20. Lesson: Parallel File Slices Do Not Require Parallel Memory Slices
+- **Date:** 2026-07-17
+- > **Tags:** #Rust #IO #Memory #Parallelism #SplitMode
+- **Context:** Parallel compression needs independent byte ranges, but representing those ranges as owned buffers duplicates the entire source and compressed result in memory.
+- **The Solution:** Give each worker its own seeked file handle and bounded reader, stream output to temporary storage, and retain only ordered temporary handles for final assembly.
+- **The Rule:** For seekable inputs, parallelize by offsets and bounded streams; memory should scale with concurrency and buffer size, never file size.
+
+---
+
+## 21. Lesson: ETA and Graph Rates Serve Different Time Horizons
+- **Date:** 2026-07-17
+- > **Tags:** #Telemetry #ETA #TUI #Averages
+- **Context:** Short-window graph rates communicate current motion but make remaining-time estimates oscillate during buffering, flushes, and worker completion.
+- **The Solution:** Keep short-window values for visualization, derive worker summaries from each worker's active lifetime, and derive job ETA from composite work divided by whole-job elapsed time.
+- **The Rule:** Never drive ETA directly from the newest visualization sample; select an averaging horizon that matches the prediction being made.
+
+---
+
+## 22. Lesson: Moving-average Windows Need a Stable Bucket Duration
+- **Date:** 2026-07-17
+- > **Tags:** #Telemetry #Sampling #Graphs #TimeSeries
+- **Context:** A moving average expressed only as a sample count changes meaning when sample cadence changes or follows an event loop.
+- **The Solution:** Aggregate graph data onto an explicit one-second cadence, normalize deltas by actual bucket duration, and define smoothing as ten consecutive buckets.
+- **The Rule:** Time-series smoothing must specify both bucket duration and bucket count so its real time horizon is deterministic.
+
+---
+
+## 23. Lesson: Worker Metrics Must Follow Assignment Lifetimes
+- **Date:** 2026-07-17
+- > **Tags:** #Workers #Telemetry #StateMachines #StreamMode
+- **Context:** Aggregate Stream counters cannot explain why one worker is slow or how far its current chunk has progressed.
+- **The Solution:** Reset worker-local bytes and timing at assignment, update them from compressor callbacks, freeze them at completion, and retain the last result after the worker becomes idle.
+- **The Rule:** Per-worker rates, ratio, and ETA must share one authoritative assignment lifetime or they will mix unrelated chunks.
+
+---
+
+## 24. Lesson: Dense Worker Telemetry Needs Stable Geometry
+- **Date:** 2026-07-17
+- > **Tags:** #TUI #Workers #Progress #Layout
+- **Context:** Variable-width worker rows make live rates and ETA difficult to compare while values change.
+- **The Solution:** Use a bordered card with identity in the title and a one-cell gauge whose label reserves fixed positions for each metric.
+- **The Rule:** Frequently changing telemetry should update in place instead of moving neighboring fields.
+
+---
+
+## 25. Lesson: Progress Fill and Statistics Need Separate Rows
+- **Date:** 2026-07-17
+- > **Tags:** #TUI #Gauge #Readability #Formatting
+- **Context:** Labels drawn inside a filled gauge can lose contrast as progress moves beneath them.
+- **The Solution:** Keep the gauge on its own row and render fixed-width, fixed-point statistics immediately below it.
+- **The Rule:** Persistent measurements should not share their visual layer with changing progress fill.
+
+---
+
+## 26. Lesson: Gauge Label Inversion Requires Both Colors
+- **Date:** 2026-07-17
+- > **Tags:** #TUI #Contrast #Accessibility #Ratatui
+- **Context:** A gauge foreground without an explicit background leaves its filled label dependent on terminal defaults.
+- **The Solution:** Define both sides of the contrast pair and test the rendered cell colors after the fill crosses the centered label.
+- **The Rule:** Never rely on terminal-default colors for text rendered over dynamic fill.
+
+---
+
+## 27. Lesson: Signed Series Avoid Stacked-chart Drift
+- **Date:** 2026-07-17
+- > **Tags:** #TUI #Charts #Ratatui #Telemetry
+- **Context:** Mirrored input/output can be rendered as two charts, but independent axes and plot areas can drift.
+- **The Solution:** Put input above zero and output below zero in one native multi-series chart with shared bounds.
+- **The Rule:** When related series share magnitude semantics, prefer signed values on one scale over separately scaled panels.
+
+---
+
+## 28. Lesson: Streaming Encoder Output Is Not a Stable Ratio Denominator
+- **Date:** 2026-07-17
+- > **Tags:** #Compression #Telemetry #Workers #UX
+- **Context:** Encoders may buffer almost all output while reporting only a small header during progress callbacks.
+- **The Solution:** Keep byte progress live but calculate displayed compression ratio only from finalized encoder output.
+- **The Rule:** Do not project a compression ratio from an output counter whose buffering semantics are unknown.
+
+---
+
+## 29. Lesson: Worker Trends Should Outlive One Assignment
+- **Date:** 2026-07-17
+- > **Tags:** #Workers #MovingAverage #Compression #Telemetry
+- **Context:** A final-only ratio is truthful but disappears while a worker starts its next chunk.
+- **The Solution:** Retain a bounded history of finalized assignment ratios per worker and display their moving average during future work.
+- **The Rule:** Operational trend metrics should span completed work units while excluding incomplete measurements.
+
+---
+
+## 30. Lesson: Smoothed ETA and Displayed Rate Must Share a Source
+- **Date:** 2026-07-17
+- > **Tags:** #Workers #ETA #MovingAverage #Telemetry
+- **Context:** Showing a smoothed throughput while deriving ETA from a different instantaneous rate makes the panel internally inconsistent.
+- **The Solution:** Use one bounded worker-rate average for both the displayed AVG and remaining-time calculation.
+- **The Rule:** A projected ETA should be derived from the exact rate presented beside it.

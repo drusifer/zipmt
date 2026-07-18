@@ -8,7 +8,9 @@ use std::sync::{Arc, Mutex};
 
 use zipmt_rust::compressor::{Bzip2Compressor, Compressor, GzipCompressor, XzCompressor, ZipError};
 use zipmt_rust::pipeline::{CompressionPipeline, InputSource, OutputDestination, ProgressEvent};
-use zipmt_rust::{TUI_ACTIVE, VERBOSE, get_output_path_mutex, log_verbose, tui};
+use zipmt_rust::{
+    DEFAULT_COMPRESSION_LEVEL, TUI_ACTIVE, VERBOSE, get_output_path_mutex, log_verbose, tui,
+};
 
 #[derive(Parser, Clone, Debug)]
 #[command(
@@ -49,8 +51,8 @@ struct Args {
     #[arg(short, long)]
     verbose: bool,
 
-    /// Compression level (1-9, defaults to 6).
-    #[arg(short = 'l', long, default_value_t = 6)]
+    /// Compression level (1-9, defaults to 9).
+    #[arg(short = 'l', long, default_value_t = DEFAULT_COMPRESSION_LEVEL)]
     level: u32,
 
     /// Run in interactive TUI mode.
@@ -60,6 +62,19 @@ struct Args {
     /// Disable interactive TUI mode.
     #[arg(long)]
     no_tui: bool,
+}
+
+fn should_run_tui(
+    tui_requested: bool,
+    no_tui_requested: bool,
+    force_tui: bool,
+    stderr_is_tty: bool,
+) -> bool {
+    if no_tui_requested {
+        return false;
+    }
+
+    force_tui || (tui_requested && stderr_is_tty)
 }
 
 fn main() {
@@ -154,20 +169,11 @@ fn run_app(args: Args, compressor: Arc<Box<dyn Compressor + Send + Sync>>) -> Re
         return Ok(());
     }
 
-    // Determine if TUI mode should run based on TTY status, redirection checks, and CLI flags
-    let stdout_is_tty = std::io::stdout().is_terminal();
-    let stdin_is_tty = std::io::stdin().is_terminal();
-    let stdout_redirected = args.stdout || (args.output.is_none() && is_stdin);
-    let tui_possible = stdout_is_tty && stdin_is_tty && !stdout_redirected;
-
+    // The TUI owns stderr, so piped stdin and redirected compression output are safe.
+    // Only the terminal used by Crossterm needs to be interactive.
+    let stderr_is_tty = std::io::stderr().is_terminal();
     let force_tui = std::env::var("ZIPMT_FORCE_TUI").is_ok();
-    let run_tui = if force_tui {
-        true
-    } else if !tui_possible {
-        false
-    } else {
-        args.tui
-    };
+    let run_tui = should_run_tui(args.tui, args.no_tui, force_tui, stderr_is_tty);
 
     // Determine input source and output destination
     let input_source = if is_stdin {
@@ -204,7 +210,7 @@ fn run_app(args: Args, compressor: Arc<Box<dyn Compressor + Send + Sync>>) -> Re
     }
 
     // Setup the pipeline
-    let pipeline = CompressionPipeline::new(compressor, threads_count);
+    let pipeline = CompressionPipeline::with_level(compressor, threads_count, args.level);
     let (controller, rx, comp_handle) = pipeline.run(input_source, output_dest);
 
     // Set initial compression level in the controller
@@ -276,4 +282,40 @@ fn run_app(args: Args, compressor: Arc<Box<dyn Compressor + Send + Sync>>) -> Re
     }
 
     res
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Args, should_run_tui};
+    use clap::{CommandFactory, Parser};
+
+    #[test]
+    fn streaming_tui_runs_when_stderr_is_a_terminal() {
+        assert!(should_run_tui(true, false, false, true));
+    }
+
+    #[test]
+    fn tui_falls_back_when_stderr_is_redirected() {
+        assert!(!should_run_tui(true, false, false, false));
+    }
+
+    #[test]
+    fn no_tui_wins_over_cli_and_environment_overrides() {
+        assert!(!should_run_tui(true, true, true, true));
+    }
+
+    #[test]
+    fn force_tui_supports_noninteractive_test_backends() {
+        assert!(should_run_tui(false, false, true, false));
+    }
+
+    #[test]
+    fn default_compression_level_is_maximum() {
+        let args = Args::parse_from(["zipmt-rust", "-"]);
+        assert_eq!(args.level, crate::DEFAULT_COMPRESSION_LEVEL);
+        assert_eq!(args.level, 9);
+
+        let help = Args::command().render_long_help().to_string();
+        assert!(help.contains("defaults to 9"));
+    }
 }

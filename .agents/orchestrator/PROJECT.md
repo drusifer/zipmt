@@ -11,9 +11,9 @@
 |---|------|-------|-------------|--------|
 | M1 | Combined Story & Arch | Cypher & Morpheus draft stories and architecture design | None | DONE |
 | M2 | Review & Sprint Plan | Smith reviews story/arch, Mouse plans tasks in `task.md` | M1 | DONE |
-| M3 | Neo Implementation | Refactor codebase, implement backend/frontend, controls, restore `-T` | M2 | PLANNED |
-| M4 | Trin QA Validation | UAT validation of features, layout verification, and test execution | M3 | PLANNED |
-| M5 | Forensic Audit | Forensic Auditor verifies implementation integrity and protocol compliance | M4 | PLANNED |
+| M3 | Neo Implementation | Refactor codebase, implement backend/frontend, controls, restore `-T` | M2 | DONE |
+| M4 | Trin QA Validation | UAT validation of features, layout verification, and test execution | M3 | DONE |
+| M5 | Forensic Audit | Forensic Auditor verifies implementation integrity and protocol compliance | M4 | FAILED |
 
 ## Interface Contracts
 ### Pipeline Library ↔ Front End / CLI

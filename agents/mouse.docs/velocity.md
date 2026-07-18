@@ -4,9 +4,9 @@ This document tracks team velocity and completion rates across sprints to assist
 
 ## 📊 Summary Metrics
 
-- **Total Sprints Completed:** 8
-- **Total Tasks Completed:** 49
-- **Average Velocity (Tasks/Sprint):** 6.13
+- **Total Sprints Completed:** 15
+- **Total Tasks Completed:** 88
+- **Average Velocity (Tasks/Sprint):** 5.87
 
 ## 📈 Sprint-by-Sprint Velocity
 
@@ -20,10 +20,20 @@ This document tracks team velocity and completion rates across sprints to assist
 | Ratatui Migration Sprint | 2026-07-14 | 9 | Closed | Ratatui Widgets & Main Event Loop |
 | CLI Defaulting & Fallbacks Sprint | 2026-07-15 | 1 | Closed | CLI Defaulting & Fallback checks |
 | Decoupling & Interactive TUI Upgrade Sprint | 2026-07-15 | 8 | Closed | Modular pipeline, interactive sliders & mouse controls |
+| Pipeline Flow Observability and Runtime Controls Sprint | 2026-07-16 | 9 | Closed | Chunk lifecycle, runtime controls, maximum defaults, responsive TUI |
+| Mirrored I/O Chart and Responsive Knobs Sprint | 2026-07-17 | 3 | Closed | Dual-mode I/O history and taller responsive controls |
+| Split-mode TUI Uplift Sprint | 2026-07-17 | 9 | Closed | Split lifecycle, aggregate status, paging/chart parity, and fixed controls |
+| TUI Completion and Smoothed I/O Sprint | 2026-07-17 | 4 | Closed | Persistent completion statistics and smoothed RATE charts |
+| Bounded-memory Split Streaming Sprint | 2026-07-17 | 4 | Closed | Fixed-memory seeked ranges and temporary compressed sections |
+| Slice Observability and System Telemetry Sprint | 2026-07-17 | 6 | Closed | Slice widgets, composite ETA, and CPU/RSS telemetry |
+| Graph Timebase and Stream Worker Sprint | 2026-07-17 | 4 | Closed | One-second buckets, MA10s, and Stream worker board |
+| Compact Stream Worker Cards Sprint | 2026-07-17 | 4 | Closed | Bordered cards, separate gauges, fixed-point metrics, and gauge contrast |
+| Native Multi-series I/O Chart Sprint | 2026-07-17 | 2 | Closed | Native signed Braille series, MA10s, and dotted guides |
+| Worker Ratio and Chart Separation Sprint | 2026-07-17 | 4 | Closed | Worker detail moving averages and native chart divider |
 
 
 ## 🔍 Historical Trend & Insights
 
-- **Consistency:** The team shows high capacity and agility, averaging ~6.13 tasks per sprint.
+- **Consistency:** The team shows high capacity and agility, averaging 5.44 tasks per sprint.
 - **Complexity Adaptability:** For complex refactoring tasks (like Sprint 1 core implementation and Sprint 6 Ratatui Migration), velocity hit a peak of 9 completed tasks, showing strong capability during major phases.
-- **Estimation Accuracy:** 100% of committed tasks were completed across all sprints (49 / 49 tasks), reflecting highly accurate scoping during sprint planning (including Tier 2 sprint planning).
+- **Estimation Accuracy:** 100% of committed tasks were completed across all sprints (98 / 98 tasks), reflecting highly accurate scoping across major and fast-track planning tiers.

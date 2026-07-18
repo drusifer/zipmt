@@ -227,7 +227,8 @@ fn test_integration_tui_mode() {
         stderr_force
     );
 
-    // 2. Run with -T arg, but no ZIPMT_FORCE_TUI. Because stdout is redirected, it should fallback to non-TUI.
+    // 2. Run with -T arg, but no ZIPMT_FORCE_TUI. Because stderr is redirected,
+    // Crossterm has no interactive terminal and should fall back to non-TUI.
     let output_opt_in = Command::new(&bin)
         .arg(&input_path)
         .arg("-o")

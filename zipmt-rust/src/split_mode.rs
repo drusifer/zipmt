@@ -1,14 +1,21 @@
 use crate::compressor::{Compressor, ZipError};
-use crate::pipeline::{PipelineController, ProgressEvent};
+use crate::pipeline::{PipelineController, ProgressEvent, SplitStage};
 use rayon::prelude::*;
 use std::fs::File;
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
+use tempfile::NamedTempFile;
 
-/// Compresses a file in Split Mode using Rayon for parallel chunk processing.
+const SPLIT_BUFFER_SIZE: usize = 64 * 1024;
+
+/// Compresses fixed file ranges concurrently with bounded memory.
+///
+/// Each worker opens and seeks the source independently, streams its range into
+/// an isolated temporary file, and returns only that file handle. The
+/// coordinator concatenates completed compressed streams in source order.
 pub fn compress_file(
     input_path: &Path,
     output_path: &Path,
@@ -17,116 +24,147 @@ pub fn compress_file(
     sender: Sender<ProgressEvent>,
     controller: &PipelineController,
 ) -> Result<(), ZipError> {
-    // Read entire input file
-    crate::log_verbose!("Reading input file: {:?}", input_path);
-    let input_data = std::fs::read(input_path)?;
-    let input_len = input_data.len();
-
-    if input_len == 0 {
-        crate::log_verbose!("Empty file detected. Compressing empty buffer...");
-        let compressed = compressor.compress(input_data.as_slice())?;
-        let mut out_file = File::create(output_path)?;
-        out_file.write_all(&compressed)?;
-        return Ok(());
-    }
-
-    // Determine chunk size based on thread count
-    let chunks_count = if num_threads > 0 {
+    let input_len = std::fs::metadata(input_path)?.len();
+    let requested_slices = if num_threads > 0 {
         num_threads
     } else {
         rayon::current_num_threads()
+    }
+    .max(1);
+    let slice_size = if input_len == 0 {
+        0
+    } else {
+        input_len.div_ceil(requested_slices as u64)
     };
-    let chunk_size = (input_len + chunks_count - 1) / chunks_count;
+    let ranges = if input_len == 0 {
+        vec![(0_usize, 0_u64, 0_u64)]
+    } else {
+        (0..requested_slices)
+            .map(|id| {
+                let start = id as u64 * slice_size;
+                (id, start, slice_size.min(input_len.saturating_sub(start)))
+            })
+            .take_while(|(_, start, _)| *start < input_len)
+            .collect::<Vec<_>>()
+    };
 
     crate::log_verbose!(
-        "Input size: {} bytes. Partitioning into {} chunks of target size: {} bytes",
+        "Input size: {} bytes. Streaming {} slices of at most {} bytes with {}KiB buffers",
         input_len,
-        chunks_count,
-        chunk_size
+        ranges.len(),
+        slice_size,
+        SPLIT_BUFFER_SIZE / 1024
     );
 
-    // Collect chunks as slices
-    let chunks: Vec<&[u8]> = input_data.chunks(chunk_size).collect();
-
-    // Send initial split progress events
-    for (i, chunk) in chunks.iter().enumerate() {
+    for (id, _, length) in &ranges {
         let _ = sender.send(ProgressEvent::SplitProgress {
-            stripe_id: i,
+            stripe_id: *id,
+            stage: SplitStage::Waiting,
             bytes_processed: 0,
             bytes_written: 0,
-            total_bytes: chunk.len(),
+            total_bytes: *length as usize,
         });
     }
 
-    crate::log_verbose!(
-        "Initializing Rayon thread pool with {} threads...",
-        chunks_count
-    );
-    // Setup rayon thread pool override if num_threads is specified
     let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(chunks_count)
+        .num_threads(requested_slices)
         .build()
-        .map_err(|e| ZipError::Compression(e.to_string()))?;
-
-    crate::log_verbose!("Compressing chunks concurrently...");
-    // Compress chunks concurrently
+        .map_err(|error| ZipError::Compression(error.to_string()))?;
+    let input_path = input_path.to_path_buf();
+    let temporary_directory = output_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
     let sender_clone = sender.clone();
     let controller_clone = controller.clone();
-    let compressed_chunks: Result<Vec<Vec<u8>>, ZipError> = pool.install(|| {
-        chunks
-            .into_par_iter()
-            .enumerate()
-            .map(|(i, chunk)| {
-                let tx = sender_clone.clone();
-                let ctrl = controller_clone.clone();
-                let bytes_processed = Arc::new(AtomicUsize::new(0));
-                let bytes_processed_clone = bytes_processed.clone();
-                let tx_clone = tx.clone();
-                let total_bytes = chunk.len();
 
-                let res = compressor.compress_with_progress(
-                    chunk,
-                    &move |bytes, duration| {
-                        let current =
-                            bytes_processed_clone.fetch_add(bytes, Ordering::Relaxed) + bytes;
-                        let _ = tx_clone.send(ProgressEvent::SplitProgress {
-                            stripe_id: i,
-                            bytes_processed: current,
-                            bytes_written: 0,
-                            total_bytes,
-                        });
-                        let _ = tx_clone.send(ProgressEvent::AvgCompressionTime(duration));
-                    },
-                    &ctrl,
-                );
+    let temporary_slices: Result<Vec<(usize, NamedTempFile, usize)>, ZipError> =
+        pool.install(|| {
+            ranges
+                .into_par_iter()
+                .map(|(id, start, length)| {
+                    let tx = sender_clone.clone();
+                    let tx_progress = tx.clone();
+                    let ctrl = controller_clone.clone();
+                    let processed = Arc::new(AtomicUsize::new(0));
+                    let processed_callback = processed.clone();
+                    let total_bytes = length as usize;
 
-                if let Ok(ref compressed) = res {
                     let _ = tx.send(ProgressEvent::SplitProgress {
-                        stripe_id: i,
-                        bytes_processed: total_bytes,
-                        bytes_written: compressed.len(),
+                        stripe_id: id,
+                        stage: SplitStage::Running,
+                        bytes_processed: 0,
+                        bytes_written: 0,
                         total_bytes,
                     });
-                }
-                res
-            })
-            .collect()
-    });
 
-    let compressed_chunks = compressed_chunks?;
+                    let mut source = File::open(&input_path)?;
+                    source.seek(SeekFrom::Start(start))?;
+                    let mut bounded_source = source.take(length);
+                    let mut temporary = NamedTempFile::new_in(&temporary_directory)?;
+                    let compressed_bytes = compressor.compress_reader_to_writer(
+                        &mut bounded_source,
+                        temporary.as_file_mut(),
+                        &move |input_bytes, output_bytes, duration| {
+                            let current = processed_callback
+                                .fetch_add(input_bytes, Ordering::Relaxed)
+                                + input_bytes;
+                            let _ = tx_progress.send(ProgressEvent::SplitProgress {
+                                stripe_id: id,
+                                stage: SplitStage::Running,
+                                bytes_processed: current.min(total_bytes),
+                                bytes_written: output_bytes,
+                                total_bytes,
+                            });
+                            let _ = tx_progress.send(ProgressEvent::AvgCompressionTime(duration));
+                        },
+                        &ctrl,
+                    )?;
+                    temporary.as_file_mut().flush()?;
+                    let _ = tx.send(ProgressEvent::SplitProgress {
+                        stripe_id: id,
+                        stage: SplitStage::Done,
+                        bytes_processed: total_bytes,
+                        bytes_written: compressed_bytes,
+                        total_bytes,
+                    });
+                    Ok((id, temporary, compressed_bytes))
+                })
+                .collect()
+        });
 
+    let mut temporary_slices = temporary_slices?;
+    temporary_slices.sort_by_key(|(id, _, _)| *id);
     crate::log_verbose!(
-        "Writing {} compressed chunks sequentially to {:?}",
-        compressed_chunks.len(),
+        "Concatenating {} temporary compressed slices into {:?}",
+        temporary_slices.len(),
         output_path
     );
-    // Write all compressed chunks sequentially to output
-    let mut out_file = File::create(output_path)?;
-    for chunk in compressed_chunks {
-        out_file.write_all(&chunk)?;
-    }
 
-    crate::log_verbose!("Compression completed successfully.");
+    let mut output = File::create(output_path)?;
+    let mut final_bytes_written = 0_usize;
+    let mut copy_buffer = [0_u8; SPLIT_BUFFER_SIZE];
+    for (_, temporary, expected_bytes) in temporary_slices {
+        let mut section = temporary.reopen()?;
+        section.seek(SeekFrom::Start(0))?;
+        let mut section_written = 0_usize;
+        loop {
+            let bytes_read = section.read(&mut copy_buffer)?;
+            if bytes_read == 0 {
+                break;
+            }
+            output.write_all(&copy_buffer[..bytes_read])?;
+            section_written = section_written.saturating_add(bytes_read);
+            final_bytes_written = final_bytes_written.saturating_add(bytes_read);
+            let _ = sender.send(ProgressEvent::SplitFinalWrite {
+                bytes_written: final_bytes_written,
+            });
+        }
+        debug_assert_eq!(section_written, expected_bytes);
+    }
+    output.flush()?;
+
+    crate::log_verbose!("Compression completed successfully with bounded memory.");
     Ok(())
 }
 
@@ -138,29 +176,37 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn test_split_mode_compression() {
+    fn test_split_mode_compression_streams_ranges_and_final_writes() {
         let dir = tempdir().unwrap();
         let input_path = dir.path().join("input.txt");
         let output_path = dir.path().join("output.txt.gz");
-
-        let original_content = b"This is some sample text repeating. ".repeat(100);
+        let original_content = b"This is some sample text repeating. ".repeat(10_000);
         std::fs::write(&input_path, &original_content).unwrap();
 
         let compressor = GzipCompressor { level: 6 };
-        let (tx, _rx) = std::sync::mpsc::channel();
+        let (tx, rx) = std::sync::mpsc::channel();
         let controller = PipelineController::new(6);
-        let result = compress_file(&input_path, &output_path, &compressor, 4, tx, &controller);
-        assert!(result.is_ok(), "Split mode compression failed");
+        compress_file(&input_path, &output_path, &compressor, 4, tx, &controller).unwrap();
 
-        // Verify we can decompress the output and it matches
         let compressed_content = std::fs::read(&output_path).unwrap();
         let mut decoder = flate2::read::MultiGzDecoder::new(&compressed_content[..]);
         let mut decompressed = Vec::new();
         decoder.read_to_end(&mut decompressed).unwrap();
+        assert_eq!(original_content, decompressed);
 
-        assert_eq!(
-            original_content, decompressed,
-            "Decompressed content mismatch"
-        );
+        let events = rx.try_iter().collect::<Vec<_>>();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            ProgressEvent::SplitProgress {
+                stage: SplitStage::Running,
+                bytes_written,
+                ..
+            } if *bytes_written > 0
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            ProgressEvent::SplitFinalWrite { bytes_written }
+                if *bytes_written == compressed_content.len()
+        )));
     }
 }

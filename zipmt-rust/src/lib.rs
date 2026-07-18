@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 pub static VERBOSE: AtomicBool = AtomicBool::new(false);
 pub static TUI_ACTIVE: AtomicBool = AtomicBool::new(false);
 pub static LOG_SCROLL_OFFSET: AtomicUsize = AtomicUsize::new(0);
+pub const DEFAULT_COMPRESSION_LEVEL: u32 = 9;
 
 pub fn get_log_buffer() -> &'static Arc<Mutex<Vec<String>>> {
     static LOG_BUFFER: OnceLock<Arc<Mutex<Vec<String>>>> = OnceLock::new();
