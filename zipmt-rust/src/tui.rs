@@ -232,7 +232,8 @@ fn next_focus(current: FocusedWidget) -> FocusedWidget {
 fn next_focus_for_mode(mode: TuiMode, current: FocusedWidget) -> FocusedWidget {
     if mode == TuiMode::Split {
         match current {
-            FocusedWidget::ThrottleDelaySlider => FocusedWidget::None,
+            FocusedWidget::ThrottleDelaySlider => FocusedWidget::ChunkSizeSlider,
+            FocusedWidget::ChunkSizeSlider => FocusedWidget::None,
             _ => FocusedWidget::ThrottleDelaySlider,
         }
     } else {
@@ -263,6 +264,12 @@ fn workers_from_slider_row(row: usize, height: usize, max_workers: usize) -> usi
 
 fn footer_height_for_rows(rows: u16) -> u16 {
     6 + rows.saturating_sub(22).saturating_div(4).min(4)
+}
+
+fn log_window_start(log_count: usize, visible_rows: usize, lines_back: usize) -> usize {
+    log_count
+        .saturating_sub(visible_rows)
+        .saturating_sub(lines_back.min(log_count.saturating_sub(visible_rows)))
 }
 
 fn split_page_size(rows: u16) -> usize {
@@ -947,6 +954,12 @@ pub fn run_tui_on_main_thread(
                                     (state_guard.split_sector_offset + page).min(max_offset);
                             }
                         }
+                        KeyCode::Home => {
+                            crate::LOG_SCROLL_OFFSET.store(usize::MAX, Ordering::Relaxed);
+                        }
+                        KeyCode::End => {
+                            crate::LOG_SCROLL_OFFSET.store(0, Ordering::Relaxed);
+                        }
                         KeyCode::Up => {
                             let mut state_guard = state.lock().unwrap();
                             match state_guard.focused_widget {
@@ -983,7 +996,7 @@ pub fn run_tui_on_main_thread(
                                 FocusedWidget::None => {
                                     let offset = crate::LOG_SCROLL_OFFSET.load(Ordering::Relaxed);
                                     crate::LOG_SCROLL_OFFSET
-                                        .store(offset.saturating_sub(1), Ordering::Relaxed);
+                                        .store(offset.saturating_add(1), Ordering::Relaxed);
                                 }
                             }
                         }
@@ -1022,7 +1035,8 @@ pub fn run_tui_on_main_thread(
                                 }
                                 FocusedWidget::None => {
                                     let offset = crate::LOG_SCROLL_OFFSET.load(Ordering::Relaxed);
-                                    crate::LOG_SCROLL_OFFSET.store(offset + 1, Ordering::Relaxed);
+                                    crate::LOG_SCROLL_OFFSET
+                                        .store(offset.saturating_sub(1), Ordering::Relaxed);
                                 }
                             }
                         }
@@ -1035,6 +1049,30 @@ pub fn run_tui_on_main_thread(
                     }
                     Event::Mouse(mouse_event) => {
                         use crossterm::event::MouseEventKind;
+                        let (w, h) = {
+                            let state_guard = state.lock().unwrap();
+                            (state_guard.terminal_cols, state_guard.terminal_rows)
+                        };
+                        let footer_height = footer_height_for_rows(h);
+                        let body_height = 11 + h.saturating_sub(22) / 2;
+                        let logs_top = 1 + body_height;
+                        let logs_bottom = h.saturating_sub(footer_height);
+                        if mouse_event.row >= logs_top && mouse_event.row < logs_bottom {
+                            let offset = crate::LOG_SCROLL_OFFSET.load(Ordering::Relaxed);
+                            match mouse_event.kind {
+                                MouseEventKind::ScrollUp => {
+                                    crate::LOG_SCROLL_OFFSET
+                                        .store(offset.saturating_add(3), Ordering::Relaxed);
+                                    continue;
+                                }
+                                MouseEventKind::ScrollDown => {
+                                    crate::LOG_SCROLL_OFFSET
+                                        .store(offset.saturating_sub(3), Ordering::Relaxed);
+                                    continue;
+                                }
+                                _ => {}
+                            }
+                        }
                         if mouse_event.kind
                             == MouseEventKind::Down(crossterm::event::MouseButton::Left)
                             || matches!(
@@ -1042,10 +1080,6 @@ pub fn run_tui_on_main_thread(
                                 MouseEventKind::Drag(crossterm::event::MouseButton::Left)
                             )
                         {
-                            let (w, h) = {
-                                let state_guard = state.lock().unwrap();
-                                (state_guard.terminal_cols, state_guard.terminal_rows)
-                            };
                             if w >= 80 && h >= 22 {
                                 let footer_height = footer_height_for_rows(h) as usize;
                                 let controls_left = (w as usize).saturating_sub(52);
@@ -1087,16 +1121,14 @@ pub fn run_tui_on_main_thread(
                                         state_guard.throttle_delay_ms = delay;
                                         state_guard.focused_widget =
                                             FocusedWidget::ThrottleDelaySlider;
-                                    } else if mode == TuiMode::Stream
-                                        && col >= controls_left + 26
-                                        && col <= controls_left + 38
+                                    } else if col >= controls_left + 26 && col <= controls_left + 38
                                     {
+                                        let mut state_guard = state.lock().unwrap();
                                         let chunk_size = chunk_size_from_slider_row(
                                             row - footer_content_top,
                                             control_height,
                                         );
                                         controller.update_chunk_size(chunk_size);
-                                        let mut state_guard = state.lock().unwrap();
                                         state_guard.chunk_size = chunk_size;
                                         state_guard.focused_widget = FocusedWidget::ChunkSizeSlider;
                                     } else if mode == TuiMode::Stream
@@ -1983,7 +2015,7 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
         };
 
         let logs_title = format!(
-            " Log Messages (▲/▼) ── Knobs: P:{}/{} C:{} Q:{} L:{} {} ",
+            " Log Messages (▲/▼, wheel, Home/End) ── Knobs: P:{}/{} C:{} Q:{} L:{} {} ",
             state.active_workers.min(pool_size),
             state.max_workers.max(pool_size),
             chunk_size_str.replace("MB", "M"),
@@ -2008,11 +2040,12 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
             Vec::new()
         };
 
-        let scroll_offset = crate::LOG_SCROLL_OFFSET.load(Ordering::Relaxed);
+        let lines_back = crate::LOG_SCROLL_OFFSET.load(Ordering::Relaxed);
         let logs_inner_height = chunks[2].height.saturating_sub(2) as usize;
         let max_offset = logs.len().saturating_sub(logs_inner_height);
-        let offset = std::cmp::min(scroll_offset, max_offset);
-        crate::LOG_SCROLL_OFFSET.store(offset, Ordering::Relaxed);
+        let lines_back = lines_back.min(max_offset);
+        let offset = log_window_start(logs.len(), logs_inner_height, lines_back);
+        crate::LOG_SCROLL_OFFSET.store(lines_back, Ordering::Relaxed);
 
         let mut log_lines = Vec::new();
         for r in 0..logs_inner_height {
@@ -2066,11 +2099,8 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
             vec![
                 Line::from(Span::styled("[P]Pause [-/+]Throttle", style_purple)),
                 Line::from(Span::styled("[PgUp/PgDn]Sectors [Q]Exit", style_purple)),
-                Line::from(Span::styled("[Tab]Throttle [↑/↓]Adjust", style_purple)),
-                Line::from(Span::styled(
-                    "[I]I/O mode Level/Part/Pool fixed",
-                    style_purple,
-                )),
+                Line::from(Span::styled("[Tab]Throttle/Chunk [↑/↓]", style_purple)),
+                Line::from(Span::styled("[I]I/O mode Level/Pool fixed", style_purple)),
             ]
         } else {
             vec![
@@ -2186,7 +2216,11 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
             })
             .title(Span::styled(
                 if state.mode == TuiMode::Split {
-                    " Partition FIXED "
+                    if chunk_focused {
+                        "[ Chunk ]"
+                    } else {
+                        " Chunk "
+                    }
                 } else if chunk_focused {
                     "[ Chunk ]"
                 } else {
@@ -2197,12 +2231,13 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
         let chunk_kib = state.chunk_size / 1024;
         let chunk_fraction = (chunk_kib as f64 / 64.0).log2() / 7.0;
         let chunk_lines = if state.mode == TuiMode::Split {
-            vec![
-                "".to_string(),
-                "PARTITION".to_string(),
-                format!("{}K", chunk_kib),
-                "FIXED".to_string(),
-            ]
+            format_knob_rows(
+                knob_height,
+                "8192K",
+                &format!("{}K", chunk_kib),
+                "64K",
+                chunk_fraction,
+            )
         } else {
             format_knob_rows(
                 knob_height,
@@ -2293,13 +2328,17 @@ mod tests {
     }
 
     #[test]
-    fn test_split_focus_only_visits_live_throttle() {
+    fn test_split_focus_visits_live_throttle_and_chunk() {
         assert_eq!(
             next_focus_for_mode(TuiMode::Split, FocusedWidget::None),
             FocusedWidget::ThrottleDelaySlider
         );
         assert_eq!(
             next_focus_for_mode(TuiMode::Split, FocusedWidget::ThrottleDelaySlider),
+            FocusedWidget::ChunkSizeSlider
+        );
+        assert_eq!(
+            next_focus_for_mode(TuiMode::Split, FocusedWidget::ChunkSizeSlider),
             FocusedWidget::None
         );
         assert_eq!(
@@ -2350,6 +2389,14 @@ mod tests {
             parse_resident_memory("Name:\tzipmt\nVmRSS:\t1234 kB\n"),
             Some(1234 * 1024)
         );
+    }
+
+    #[test]
+    fn test_log_window_follows_tail_and_scrolls_back() {
+        assert_eq!(log_window_start(20, 5, 0), 15);
+        assert_eq!(log_window_start(20, 5, 3), 12);
+        assert_eq!(log_window_start(20, 5, usize::MAX), 0);
+        assert_eq!(log_window_start(3, 5, 0), 0);
     }
 
     #[test]
@@ -2837,7 +2884,7 @@ mod tests {
     }
 
     #[test]
-    fn test_split_expanded_layout_shows_chart_paging_and_fixed_controls() {
+    fn test_split_expanded_layout_shows_chart_paging_and_live_chunk_control() {
         use crate::pipeline::SplitStage;
 
         let mut state = TuiState::new_split(12, 12 * 1024, 9);
@@ -2870,9 +2917,9 @@ mod tests {
         assert!(output.contains("RUN"));
         assert!(output.contains("I/O Flow [I] RATE"));
         assert!(output.contains("ENCODER"));
-        assert!(output.contains("PARTITION"));
+        assert!(output.contains("Chunk"));
         assert!(output.contains("POOL"));
-        assert!(output.matches("FIXED").count() >= 3);
+        assert!(output.matches("FIXED").count() >= 2);
         assert!(output.contains("PgUp/PgDn"));
         assert!(output.contains("Process"));
         assert!(output.contains("CPU 37.5%"));

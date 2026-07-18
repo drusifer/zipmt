@@ -3,6 +3,9 @@
 This file tracks the current state of code implementations and tech stacks maintained by the Software Engineer (Neo).
 
 ## Recent Decisions
+- **Unified chunk-buffer reuse (2026-07-18)**: Stream transfers its reader allocation without cloning and feeds the chunk directly to encoders. Split workers reuse one heap chunk, replacing it only at atomic Chunk-size read boundaries; encoder output still writes directly to temporary slice files. Bounded verbose logs expose worker range, chunk replacement, 10% milestones, temp output, completion, and final concatenation.
+- **Scrollable TUI logs (2026-07-18)**: Logs follow the tail by default; unfocused Up/Down and mouse wheel move through history, while Home/End jump to oldest/newest. Scroll-back is clamped to retained history.
+- **Native Split/Stream profiles (2026-07-18)**: Symbolized two-worker XZ level-1 perf runs attribute 87.29% Split and 87.90% Stream self-cost to four liblzma match-finder/encoder symbols; Rust orchestration, direct chunk input, ordering, and I/O do not appear as material self-costs.
 - **Smoothed worker rate and ETA over 10 chunks (2026-07-17)**: Each worker keeps 10 finalized input rates; an active assignment joins as the provisional newest sample, and the same average drives both AVG and ETA.
 - **Added per-worker ratio moving average (2026-07-17)**: Each Stream worker retains its last 10 finalized chunk ratios; the fixed-width average remains visible across assignments and adapts as chunks complete under new compression levels.
 - **Stabilized worker ratio and chart separation (2026-07-17)**: Worker progress now distinguishes final output, hides ratio during encoder buffering, and bounds the fixed final field; the native chart zero guide is a faint continuous Braille divider.
@@ -41,4 +44,4 @@ This file tracks the current state of code implementations and tech stacks maint
 - **CLI Opt-In TUI Bug Fix (R3)**: Resolved TUI defaulting issue. Made TUI strictly opt-in via `-T`/`--tui` with non-TTY/redirection override fallback to false, and environment override `ZIPMT_FORCE_TUI` to true. Updated integration tests to verify opt-in and override logic.
 
 ---
-*Last updated: 2026-07-17T14:21:00-04:00*
+*Last updated: 2026-07-18T17:14:00-04:00*

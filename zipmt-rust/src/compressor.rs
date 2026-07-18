@@ -61,11 +61,20 @@ pub trait Compressor: Send + Sync {
         on_progress: &(dyn Fn(usize, usize, std::time::Duration) + Send + Sync),
         controller: &PipelineController,
     ) -> Result<Vec<u8>, ZipError> {
-        let mut reader = std::io::Cursor::new(input);
         let mut output = Vec::new();
-        self.compress_reader_to_writer(&mut reader, &mut output, on_progress, controller)?;
+        self.compress_slice_to_writer(input, &mut output, on_progress, controller)?;
         Ok(output)
     }
+
+    /// Compresses an existing in-memory chunk directly, without copying it
+    /// through an intermediate read buffer.
+    fn compress_slice_to_writer(
+        &self,
+        input: &[u8],
+        writer: &mut dyn Write,
+        on_progress: &(dyn Fn(usize, usize, std::time::Duration) + Send + Sync),
+        controller: &PipelineController,
+    ) -> Result<usize, ZipError>;
 
     /// Compresses a bounded reader into a writer without buffering the full stream.
     fn compress_reader_to_writer(
@@ -104,12 +113,50 @@ fn check_throttle(controller: &PipelineController) {
     }
 }
 
+fn check_control_state(controller: &PipelineController) -> Result<(), ZipError> {
+    if controller.is_aborted.load(Ordering::Relaxed) {
+        return Err(ZipError::Compression("Aborted".into()));
+    }
+    while controller.is_paused.load(Ordering::Relaxed) {
+        if controller.is_aborted.load(Ordering::Relaxed) {
+            return Err(ZipError::Compression("Aborted".into()));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    check_throttle(controller);
+    Ok(())
+}
+
 /// Gzip compressor adapter.
 pub struct GzipCompressor {
     pub level: u32,
 }
 
 impl Compressor for GzipCompressor {
+    fn compress_slice_to_writer(
+        &self,
+        input: &[u8],
+        writer: &mut dyn Write,
+        on_progress: &(dyn Fn(usize, usize, std::time::Duration) + Send + Sync),
+        controller: &PipelineController,
+    ) -> Result<usize, ZipError> {
+        let level = controller.compression_level.load(Ordering::Relaxed);
+        let counting_writer = CountingWriter {
+            inner: writer,
+            bytes_written: 0,
+        };
+        let mut encoder = GzEncoder::new(counting_writer, Compression::new(level));
+        check_control_state(controller)?;
+        let start = std::time::Instant::now();
+        encoder.write_all(input)?;
+        on_progress(
+            input.len(),
+            encoder.get_ref().bytes_written,
+            start.elapsed(),
+        );
+        Ok(encoder.finish()?.bytes_written)
+    }
+
     fn compress_reader_to_writer(
         &self,
         reader: &mut dyn Read,
@@ -123,22 +170,17 @@ impl Compressor for GzipCompressor {
             bytes_written: 0,
         };
         let mut encoder = GzEncoder::new(counting_writer, Compression::new(level));
-        let mut buffer = [0_u8; 64 * 1024];
+        let mut buffer = vec![0_u8; controller.chunk_size.load(Ordering::Acquire)];
         loop {
+            let requested = controller.chunk_size.load(Ordering::Acquire);
+            if buffer.len() != requested {
+                buffer = vec![0_u8; requested];
+            }
             let bytes_read = reader.read(&mut buffer)?;
             if bytes_read == 0 {
                 break;
             }
-            if controller.is_aborted.load(Ordering::Relaxed) {
-                return Err(ZipError::Compression("Aborted".into()));
-            }
-            while controller.is_paused.load(Ordering::Relaxed) {
-                if controller.is_aborted.load(Ordering::Relaxed) {
-                    return Err(ZipError::Compression("Aborted".into()));
-                }
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-            check_throttle(controller);
+            check_control_state(controller)?;
             let start = std::time::Instant::now();
             encoder.write_all(&buffer[..bytes_read])?;
             let duration = start.elapsed();
@@ -164,6 +206,30 @@ pub struct Bzip2Compressor {
 }
 
 impl Compressor for Bzip2Compressor {
+    fn compress_slice_to_writer(
+        &self,
+        input: &[u8],
+        writer: &mut dyn Write,
+        on_progress: &(dyn Fn(usize, usize, std::time::Duration) + Send + Sync),
+        controller: &PipelineController,
+    ) -> Result<usize, ZipError> {
+        let level = controller.compression_level.load(Ordering::Relaxed);
+        let counting_writer = CountingWriter {
+            inner: writer,
+            bytes_written: 0,
+        };
+        let mut encoder = BzEncoder::new(counting_writer, bzip2::Compression::new(level));
+        check_control_state(controller)?;
+        let start = std::time::Instant::now();
+        encoder.write_all(input)?;
+        on_progress(
+            input.len(),
+            encoder.get_ref().bytes_written,
+            start.elapsed(),
+        );
+        Ok(encoder.finish()?.bytes_written)
+    }
+
     fn compress_reader_to_writer(
         &self,
         reader: &mut dyn Read,
@@ -177,22 +243,17 @@ impl Compressor for Bzip2Compressor {
             bytes_written: 0,
         };
         let mut encoder = BzEncoder::new(counting_writer, bzip2::Compression::new(level));
-        let mut buffer = [0_u8; 64 * 1024];
+        let mut buffer = vec![0_u8; controller.chunk_size.load(Ordering::Acquire)];
         loop {
+            let requested = controller.chunk_size.load(Ordering::Acquire);
+            if buffer.len() != requested {
+                buffer = vec![0_u8; requested];
+            }
             let bytes_read = reader.read(&mut buffer)?;
             if bytes_read == 0 {
                 break;
             }
-            if controller.is_aborted.load(Ordering::Relaxed) {
-                return Err(ZipError::Compression("Aborted".into()));
-            }
-            while controller.is_paused.load(Ordering::Relaxed) {
-                if controller.is_aborted.load(Ordering::Relaxed) {
-                    return Err(ZipError::Compression("Aborted".into()));
-                }
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-            check_throttle(controller);
+            check_control_state(controller)?;
             let start = std::time::Instant::now();
             encoder.write_all(&buffer[..bytes_read])?;
             let duration = start.elapsed();
@@ -218,6 +279,30 @@ pub struct XzCompressor {
 }
 
 impl Compressor for XzCompressor {
+    fn compress_slice_to_writer(
+        &self,
+        input: &[u8],
+        writer: &mut dyn Write,
+        on_progress: &(dyn Fn(usize, usize, std::time::Duration) + Send + Sync),
+        controller: &PipelineController,
+    ) -> Result<usize, ZipError> {
+        let level = controller.compression_level.load(Ordering::Relaxed);
+        let counting_writer = CountingWriter {
+            inner: writer,
+            bytes_written: 0,
+        };
+        let mut encoder = XzEncoder::new(counting_writer, level);
+        check_control_state(controller)?;
+        let start = std::time::Instant::now();
+        encoder.write_all(input)?;
+        on_progress(
+            input.len(),
+            encoder.get_ref().bytes_written,
+            start.elapsed(),
+        );
+        Ok(encoder.finish()?.bytes_written)
+    }
+
     fn compress_reader_to_writer(
         &self,
         reader: &mut dyn Read,
@@ -231,22 +316,17 @@ impl Compressor for XzCompressor {
             bytes_written: 0,
         };
         let mut encoder = XzEncoder::new(counting_writer, level);
-        let mut buffer = [0_u8; 64 * 1024];
+        let mut buffer = vec![0_u8; controller.chunk_size.load(Ordering::Acquire)];
         loop {
+            let requested = controller.chunk_size.load(Ordering::Acquire);
+            if buffer.len() != requested {
+                buffer = vec![0_u8; requested];
+            }
             let bytes_read = reader.read(&mut buffer)?;
             if bytes_read == 0 {
                 break;
             }
-            if controller.is_aborted.load(Ordering::Relaxed) {
-                return Err(ZipError::Compression("Aborted".into()));
-            }
-            while controller.is_paused.load(Ordering::Relaxed) {
-                if controller.is_aborted.load(Ordering::Relaxed) {
-                    return Err(ZipError::Compression("Aborted".into()));
-                }
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-            check_throttle(controller);
+            check_control_state(controller)?;
             let start = std::time::Instant::now();
             encoder.write_all(&buffer[..bytes_read])?;
             let duration = start.elapsed();
@@ -269,6 +349,27 @@ impl Compressor for XzCompressor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
+    use std::sync::{Arc, Mutex};
+
+    struct ResizingReader {
+        inner: Cursor<Vec<u8>>,
+        controller: PipelineController,
+        read_sizes: Arc<Mutex<Vec<usize>>>,
+        changed: bool,
+    }
+
+    impl Read for ResizingReader {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            self.read_sizes.lock().unwrap().push(buffer.len());
+            let read = self.inner.read(buffer)?;
+            if read > 0 && !self.changed {
+                assert!(self.controller.update_chunk_size(128 * 1024));
+                self.changed = true;
+            }
+            Ok(read)
+        }
+    }
 
     fn test_compressor_behavior(compressor: &dyn Compressor) {
         let original_data = b"Hello, this is a test string to verify the compression and decompression loops in Rust!";
@@ -322,5 +423,46 @@ mod tests {
     #[test]
     fn test_xz_compressor() {
         test_compressor_behavior(&XzCompressor { level: 6 });
+    }
+
+    #[test]
+    fn stream_chunk_is_fed_directly_to_encoder() {
+        let input = vec![b'x'; 256 * 1024];
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let callback_calls = calls.clone();
+        let controller = PipelineController::new(6);
+        let compressed = GzipCompressor { level: 6 }
+            .compress_with_progress(
+                &input,
+                &move |input_bytes, _, _| callback_calls.lock().unwrap().push(input_bytes),
+                &controller,
+            )
+            .unwrap();
+
+        assert!(!compressed.is_empty());
+        assert_eq!(*calls.lock().unwrap(), vec![input.len()]);
+    }
+
+    #[test]
+    fn split_reader_replaces_reusable_chunk_after_atomic_size_change() {
+        let input = vec![b'y'; 300 * 1024];
+        let controller = PipelineController::new(6);
+        assert!(controller.update_chunk_size(64 * 1024));
+        let read_sizes = Arc::new(Mutex::new(Vec::new()));
+        let mut reader = ResizingReader {
+            inner: Cursor::new(input),
+            controller: controller.clone(),
+            read_sizes: read_sizes.clone(),
+            changed: false,
+        };
+        let mut output = Vec::new();
+
+        GzipCompressor { level: 6 }
+            .compress_reader_to_writer(&mut reader, &mut output, &|_, _, _| {}, &controller)
+            .unwrap();
+
+        let sizes = read_sizes.lock().unwrap();
+        assert_eq!(sizes[0], 64 * 1024);
+        assert_eq!(sizes[1], 128 * 1024);
     }
 }

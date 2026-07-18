@@ -232,7 +232,7 @@ pub fn compress_stream(
                     break;
                 }
 
-                let chunk_size = ctrl_reader.chunk_size.load(Ordering::Relaxed);
+                let chunk_size = ctrl_reader.chunk_size.load(Ordering::Acquire);
                 let mut buffer = vec![0u8; chunk_size];
                 let mut bytes_read_so_far = 0;
                 while bytes_read_so_far < chunk_size {
@@ -271,9 +271,10 @@ pub fn compress_stream(
                     seq_num,
                     bytes_read_so_far
                 );
+                buffer.truncate(bytes_read_so_far);
                 let block = Block {
                     seq_num,
-                    data: buffer[..bytes_read_so_far].to_vec(),
+                    data: buffer,
                 };
                 let _ = tx_reader.send(ProgressEvent::ChunkQueued {
                     seq_num,

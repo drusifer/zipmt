@@ -1,6 +1,6 @@
 ---
 source: src/tui.rs
-assertion_line: 2786
+assertion_line: 2950
 expression: clean_output
 ---
 ZIPMT PIPELINE CONTROLLER ════════════════════════════════════ [STATUS: RUNNING]
@@ -15,7 +15,7 @@ ZIPMT PIPELINE CONTROLLER ══════════════════
 │                                            │╭ Process ───────────────────────╮
 │Q -- (3/8)  PEND --  N #1                   ││CPU --  RSS --                  │
 ╰────────────────────────────────────────────╯╰────────────────────────────────╯
-╭ Log Messages (▲/▼) ── Knobs: P:4/4 C:1.0M Q:8 L:6 (avg:--) ──────────────────╮
+╭ Log Messages (▲/▼, wheel, Home/End) ── Knobs: P:4/4 C:1.0M Q:8 L:6 (avg:--) ─╮
 │                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯

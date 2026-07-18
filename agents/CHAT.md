@@ -1504,3 +1504,82 @@ make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
 ---
 [<small>2026-07-18 12:32:55</small>] [**Mouse**]->[**all**] *handoff*:
  Sprint closure recorded: 3/3 complete, retrospective and velocity reconciled, follow-on debt retained in task.md. Team is idle and awaiting the next user-directed increment.
+
+---
+[<small>2026-07-18 16:17:47</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make build-rust | /home/drusifer/Projects/zipmt/build/build.out
+Finished `release` profile [optimized] target(s) in 15.46s
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-18 17:00:24</small>] [**Neo**]->[**all**] *swe init*:
+ Implementing a reusable heap-backed compression read-buffer control with 64 KiB default. It will be controller-backed so TUI changes affect newly started encoder calls without reallocating per loop iteration.
+
+---
+[<small>2026-07-18 17:14:14</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make test-rust | /home/drusifer/Projects/zipmt/build/build.out
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-18 17:14:41</small>] [**Neo**]->[**Trin**] *handoff*:
+ Chunk reuse implementation complete. Stream transfers and directly encodes its existing Vec; Split reuses one chunk and atomically replaces it at read boundaries when the live Chunk knob changes; temp output remains direct. Focused unit gates and 7 integration tests pass. @Trin *qa uat chunk-buffer-reuse
+
+---
+[<small>2026-07-18 17:20:03</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make test-rust | /home/drusifer/Projects/zipmt/build/build.out
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-18 17:20:14</small>] [**Neo**]->[**Trin**] *handoff*:
+ Added bounded Split worker diagnostics: assigned ranges/initial chunk, temp destination, live chunk replacement, ~10% progress, completion ratio/time, and ordered final append. No per-read flood. Focused Split compression test passes. @Trin *qa uat chunk-buffer-reuse
+
+---
+[<small>2026-07-18 17:23:29</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make test-rust | /home/drusifer/Projects/zipmt/build/build.out
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-18 17:23:43</small>] [**Neo**]->[**Trin**] *handoff*:
+ TUI logs now tail-follow by default and scroll through retained history: Up/Down when controls are unfocused, mouse wheel over logs, Home oldest, End newest. Offset clamps safely. Focused window test and both layout snapshots pass. @Trin *qa uat chunk-buffer-reuse
+
+---
+[<small>2026-07-18 17:39:33</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make rust-profile-report | /home/drusifer/Projects/zipmt/build/build.out
+report written to build/perf-report.txt
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+Processed 2552 events and lost 1 chunks!
+
+Check IO/CPU overload!
+
+
+---
+[<small>2026-07-18 17:39:57</small>] [**Neo**]->[**Trin**] *handoff*:
+ Native symbolized Split profile complete: 1,956 samples, one lost chunk. Four liblzma match-finder/encode symbols consume 87.29% self CPU; Rust orchestration/chunk/log/final-copy paths are not material hotspots. Flamegraph and perf report are in build/. Output integrity passes.
+
+---
+[<small>2026-07-18 18:11:59</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make rust-profile-stream | /home/drusifer/Projects/zipmt/build/build.out
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+Processed 2076 events and lost 4 chunks!
+
+Check IO/CPU overload!
+
+
+---
+[<small>2026-07-18 18:12:20</small>] [**Neo**]->[**Trin**] *handoff*:
+ Added matching native Stream profiling. Stream: 1,597 samples, 4 lost chunks; same four liblzma symbols consume 87.90% self CPU. Queueing/direct chunk encode/ordered output are not material hotspots. Separate Split/Stream flamegraphs and reports are in build/; both outputs pass xz integrity.

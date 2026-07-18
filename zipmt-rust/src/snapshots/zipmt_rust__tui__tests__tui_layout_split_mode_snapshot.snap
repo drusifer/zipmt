@@ -1,6 +1,6 @@
 ---
 source: src/tui.rs
-assertion_line: 2719
+assertion_line: 2883
 expression: clean_output
 ---
 ZIPMT PIPELINE CONTROLLER ════════════════════════════════════ [STATUS: RUNNING]
@@ -15,13 +15,13 @@ ZIPMT PIPELINE CONTROLLER ══════════════════
 │    AVG 0B/s→0B/s  OUT 0B  R --               │╭ Process ─────────────────────╮
 │                                              ││CPU --  RSS --                │
 ╰──────────────────────────────────────────────╯╰──────────────────────────────╯
-╭ Log Messages (▲/▼) ── Knobs: P:4/4 C:0.1M Q:0 L:6 (avg:--) ──────────────────╮
+╭ Log Messages (▲/▼, wheel, Home/End) ── Knobs: P:4/4 C:0.1M Q:0 L:6 (avg:--) ─╮
 │                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-╭ Pipeline Controls ───────╮╭ Level FIXE╮╭ Throttle ─╮╭ Partition ╮╭ Pool FIXED╮
-│[P]Pause [-/+]Throttle    ││           ││500 MAX ░  ││           ││           │
-│[PgUp/PgDn]Sectors [Q]Exit││ENCODER    ││        ░  ││PARTITION  ││POOL       │
-│[Tab]Throttle [↑/↓]Adjust ││LEVEL 6    ││        ░  ││1024K      ││4          │
-│[I]I/O mode Level/Part/Poo││FIXED      ││      0 █◀ ││FIXED      ││FIXED      │
+╭ Pipeline Controls ───────╮╭ Level FIXE╮╭ Throttle ─╮╭ Chunk ────╮╭ Pool FIXED╮
+│[P]Pause [-/+]Throttle    ││           ││500 MAX ░  ││  8192K ░  ││           │
+│[PgUp/PgDn]Sectors [Q]Exit││ENCODER    ││        ░  ││  1024K █◀ ││POOL       │
+│[Tab]Throttle/Chunk [↑/↓] ││LEVEL 6    ││        ░  ││        █  ││4          │
+│[I]I/O mode Level/Pool fix││FIXED      ││      0 █◀ ││    64K █  ││FIXED      │
 ╰──────────────────────────╯╰───────────╯╰───────────╯╰───────────╯╰───────────╯

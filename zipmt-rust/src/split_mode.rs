@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use tempfile::NamedTempFile;
 
-const SPLIT_BUFFER_SIZE: usize = 64 * 1024;
+const FINAL_COPY_BUFFER_SIZE: usize = 64 * 1024;
 
 /// Compresses fixed file ranges concurrently with bounded memory.
 ///
@@ -49,11 +49,11 @@ pub fn compress_file(
     };
 
     crate::log_verbose!(
-        "Input size: {} bytes. Streaming {} slices of at most {} bytes with {}KiB buffers",
+        "Input size: {} bytes. Streaming {} slices of at most {} bytes with {}KiB initial buffers",
         input_len,
         ranges.len(),
         slice_size,
-        SPLIT_BUFFER_SIZE / 1024
+        controller.chunk_size.load(Ordering::Relaxed) / 1024
     );
 
     for (id, _, length) in &ranges {
@@ -83,12 +83,29 @@ pub fn compress_file(
             ranges
                 .into_par_iter()
                 .map(|(id, start, length)| {
+                    let worker_started = std::time::Instant::now();
                     let tx = sender_clone.clone();
                     let tx_progress = tx.clone();
                     let ctrl = controller_clone.clone();
+                    let ctrl_progress = ctrl.clone();
                     let processed = Arc::new(AtomicUsize::new(0));
                     let processed_callback = processed.clone();
                     let total_bytes = length as usize;
+                    let progress_step = (total_bytes / 10).max(1);
+                    let next_log_at = Arc::new(AtomicUsize::new(progress_step));
+                    let next_log_callback = next_log_at.clone();
+                    let initial_chunk_size = ctrl.chunk_size.load(Ordering::Acquire);
+                    let logged_chunk_size = Arc::new(AtomicUsize::new(initial_chunk_size));
+                    let logged_chunk_callback = logged_chunk_size.clone();
+
+                    crate::log_verbose!(
+                        "Slice worker {} starting: range={}..{} ({} bytes), chunk={}KiB",
+                        id,
+                        start,
+                        start.saturating_add(length),
+                        length,
+                        initial_chunk_size / 1024
+                    );
 
                     let _ = tx.send(ProgressEvent::SplitProgress {
                         stripe_id: id,
@@ -102,6 +119,11 @@ pub fn compress_file(
                     source.seek(SeekFrom::Start(start))?;
                     let mut bounded_source = source.take(length);
                     let mut temporary = NamedTempFile::new_in(&temporary_directory)?;
+                    crate::log_verbose!(
+                        "Slice worker {} streaming encoder output to {:?}",
+                        id,
+                        temporary.path()
+                    );
                     let compressed_bytes = compressor.compress_reader_to_writer(
                         &mut bounded_source,
                         temporary.as_file_mut(),
@@ -109,6 +131,47 @@ pub fn compress_file(
                             let current = processed_callback
                                 .fetch_add(input_bytes, Ordering::Relaxed)
                                 + input_bytes;
+                            let current_chunk_size =
+                                ctrl_progress.chunk_size.load(Ordering::Acquire);
+                            let previous_chunk_size =
+                                logged_chunk_callback.swap(current_chunk_size, Ordering::Relaxed);
+                            if current_chunk_size != previous_chunk_size {
+                                crate::log_verbose!(
+                                    "Slice worker {} replaced read chunk: {}KiB -> {}KiB",
+                                    id,
+                                    previous_chunk_size / 1024,
+                                    current_chunk_size / 1024
+                                );
+                            }
+                            let threshold = next_log_callback.load(Ordering::Relaxed);
+                            if current >= threshold {
+                                let next = threshold
+                                    .saturating_add(progress_step)
+                                    .min(total_bytes.saturating_add(1));
+                                if next_log_callback
+                                    .compare_exchange(
+                                        threshold,
+                                        next,
+                                        Ordering::Relaxed,
+                                        Ordering::Relaxed,
+                                    )
+                                    .is_ok()
+                                {
+                                    crate::log_verbose!(
+                                        "Slice worker {} progress: {}/{} bytes ({:.1}%), compressed={} bytes",
+                                        id,
+                                        current.min(total_bytes),
+                                        total_bytes,
+                                        if total_bytes == 0 {
+                                            100.0
+                                        } else {
+                                            current.min(total_bytes) as f64 * 100.0
+                                                / total_bytes as f64
+                                        },
+                                        output_bytes
+                                    );
+                                }
+                            }
                             let _ = tx_progress.send(ProgressEvent::SplitProgress {
                                 stripe_id: id,
                                 stage: SplitStage::Running,
@@ -121,6 +184,13 @@ pub fn compress_file(
                         &ctrl,
                     )?;
                     temporary.as_file_mut().flush()?;
+                    crate::log_verbose!(
+                        "Slice worker {} complete: {} -> {} bytes in {:.2}s",
+                        id,
+                        total_bytes,
+                        compressed_bytes,
+                        worker_started.elapsed().as_secs_f64()
+                    );
                     let _ = tx.send(ProgressEvent::SplitProgress {
                         stripe_id: id,
                         stage: SplitStage::Done,
@@ -143,8 +213,14 @@ pub fn compress_file(
 
     let mut output = File::create(output_path)?;
     let mut final_bytes_written = 0_usize;
-    let mut copy_buffer = [0_u8; SPLIT_BUFFER_SIZE];
-    for (_, temporary, expected_bytes) in temporary_slices {
+    let mut copy_buffer = [0_u8; FINAL_COPY_BUFFER_SIZE];
+    for (id, temporary, expected_bytes) in temporary_slices {
+        crate::log_verbose!(
+            "Final output: appending slice {} ({} bytes) from {:?}",
+            id,
+            expected_bytes,
+            temporary.path()
+        );
         let mut section = temporary.reopen()?;
         section.seek(SeekFrom::Start(0))?;
         let mut section_written = 0_usize;
@@ -161,6 +237,11 @@ pub fn compress_file(
             });
         }
         debug_assert_eq!(section_written, expected_bytes);
+        crate::log_verbose!(
+            "Final output: slice {} appended; total={} bytes",
+            id,
+            final_bytes_written
+        );
     }
     output.flush()?;
 

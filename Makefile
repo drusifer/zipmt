@@ -18,7 +18,7 @@ endif
 
 # ── Bob Protocol Targets ─────────────────────────────────────────────────────
 
-.PHONY: tldr test test-rust format-rust rust-format-check rust-clippy rust-complexity rust-cyclomatic rust-dead-code rust-quality rust-audit rust-unsafe rust-miri rust-memcheck rust-profile rust-bloat rust-quality-full rust-tools-check rust-tools-install build-rust build-rust-debug via_index install_bob update_bob pull_bob clean_bob diff_bob
+.PHONY: tldr test test-rust format-rust rust-format-check rust-clippy rust-complexity rust-cyclomatic rust-dead-code rust-quality rust-audit rust-unsafe rust-miri rust-memcheck rust-profile rust-profile-report rust-profile-stream rust-callgrind rust-bloat rust-quality-full rust-tools-check rust-tools-install build-rust build-rust-debug via_index install_bob update_bob pull_bob clean_bob diff_bob
 
 tldr: ## Show TL;DR summaries from all project files (quick orientation for agents)
 	@rg --no-heading "TLDR:" --glob "*.md" -N | sed 's|^\./||' | sort
@@ -72,11 +72,35 @@ rust-memcheck: ## Run the debug binary under Valgrind (set MEMCHECK_ARGS)
 	@cd zipmt-rust && cargo build
 	@cd zipmt-rust && valgrind --tool=memcheck --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=2 target/debug/zipmt-rust $(MEMCHECK_ARGS)
 
-rust-profile: ## Generate build/flamegraph.svg (set PROFILE_ARGS)
+rust-profile: ## Generate build/flamegraph-split.svg (set PROFILE_ARGS)
 	@command -v cargo-flamegraph >/dev/null || { echo "missing cargo-flamegraph; run: make rust-tools-install"; exit 2; }
 	@[ -n "$(PROFILE_ARGS)" ] || { echo 'usage: make rust-profile PROFILE_ARGS="-o /tmp/out.xz /path/to/input"'; exit 2; }
 	@mkdir -p build
-	@cd zipmt-rust && cargo flamegraph --release --bin zipmt-rust --output ../build/flamegraph.svg -- $(PROFILE_ARGS)
+	@cd zipmt-rust && cargo flamegraph --release --bin zipmt-rust --output ../build/flamegraph-split.svg -- $(PROFILE_ARGS)
+
+rust-profile-report: ## Export Split perf symbols to build/perf-report-split.txt
+	@command -v perf >/dev/null || { echo "missing perf; install linux-perf"; exit 2; }
+	@[ -f zipmt-rust/perf.data ] || { echo "missing zipmt-rust/perf.data; run: make rust-profile PROFILE_ARGS=..."; exit 2; }
+	@perf report --stdio --no-children --percent-limit 0.1 --sort comm,dso,symbol -i zipmt-rust/perf.data > build/perf-report-split.txt
+	@echo "report written to build/perf-report-split.txt"
+
+rust-profile-stream: ## Profile Stream mode from PROFILE_STDIN
+	@command -v cargo-flamegraph >/dev/null || { echo "missing cargo-flamegraph; run: make rust-tools-install"; exit 2; }
+	@command -v perf >/dev/null || { echo "missing perf; install linux-perf"; exit 2; }
+	@[ -n "$(PROFILE_STDIN)" ] || { echo 'usage: make rust-profile-stream PROFILE_STDIN=/tmp/input PROFILE_ARGS="--no-tui -a xz -l 1 -j 2 -o /tmp/out.xz -"'; exit 2; }
+	@[ -n "$(PROFILE_ARGS)" ] || { echo 'missing PROFILE_ARGS; final positional input must be -'; exit 2; }
+	@mkdir -p build
+	@cd zipmt-rust && cargo flamegraph --release --bin zipmt-rust --output ../build/flamegraph-stream.svg -- $(PROFILE_ARGS) < $(PROFILE_STDIN)
+	@perf report --stdio --no-children --percent-limit 0.1 --sort comm,dso,symbol -i zipmt-rust/perf.data > build/perf-report-stream.txt
+	@echo "Stream profile written to build/flamegraph-stream.svg and build/perf-report-stream.txt"
+
+rust-callgrind: ## Generate build/callgrind.out without perf (set PROFILE_ARGS)
+	@command -v valgrind >/dev/null || { echo "missing valgrind; install it with the system package manager"; exit 2; }
+	@[ -n "$(PROFILE_ARGS)" ] || { echo 'usage: make rust-callgrind PROFILE_ARGS="--no-tui -a xz -l 1 -j 2 -o /tmp/out.xz /tmp/input"'; exit 2; }
+	@mkdir -p build
+	@cd zipmt-rust && cargo build --release
+	@cd zipmt-rust && valgrind --tool=callgrind --callgrind-out-file=../build/callgrind.out target/release/zipmt-rust $(PROFILE_ARGS)
+	@echo "profile written to build/callgrind.out; inspect with: callgrind_annotate build/callgrind.out"
 
 rust-bloat: ## Report release binary size by crate
 	@command -v cargo-bloat >/dev/null || { echo "missing cargo-bloat; run: make rust-tools-install"; exit 2; }
@@ -327,7 +351,16 @@ rust-miri: ## Run Rust tests under Miri UB and leak detection (nightly)
 rust-memcheck: ## Run the debug binary under Valgrind (set MEMCHECK_ARGS)
 	@./agents/tools/mkf.py $(V) $@
 
-rust-profile: ## Generate build/flamegraph.svg (set PROFILE_ARGS)
+rust-profile: ## Generate build/flamegraph-split.svg (set PROFILE_ARGS)
+	@./agents/tools/mkf.py $(V) $@
+
+rust-profile-report: ## Export Split perf symbols to build/perf-report-split.txt
+	@./agents/tools/mkf.py $(V) $@
+
+rust-profile-stream: ## Profile Stream mode from PROFILE_STDIN
+	@./agents/tools/mkf.py $(V) $@
+
+rust-callgrind: ## Generate build/callgrind.out without perf (set PROFILE_ARGS)
 	@./agents/tools/mkf.py $(V) $@
 
 rust-bloat: ## Report release binary size by crate

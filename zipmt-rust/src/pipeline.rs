@@ -115,7 +115,7 @@ impl PipelineController {
     pub fn update_chunk_size(&self, bytes: usize) -> bool {
         let valid = (MIN_CHUNK_SIZE..=MAX_CHUNK_SIZE).contains(&bytes) && bytes.is_power_of_two();
         if valid {
-            self.chunk_size.store(bytes, Ordering::Relaxed);
+            self.chunk_size.store(bytes, Ordering::Release);
         }
         valid
     }

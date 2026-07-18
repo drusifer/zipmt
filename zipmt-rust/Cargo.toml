@@ -19,3 +19,6 @@ tempfile = "3.10"
 [dev-dependencies]
 insta = { version = "1.34", features = ["yaml"] }
 regex = "1.10"
+
+[profile.release]
+debug = true
