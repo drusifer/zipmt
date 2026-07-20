@@ -1,9 +1,9 @@
 use crate::compressor::{Compressor, ZipError};
-use crate::pipeline::{PipelineController, ProgressEvent};
+use crate::pipeline::{PipelineController, ProgressEvent, ProgressSink, WorkerStage};
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::mpsc::{RecvTimeoutError, Sender, channel, sync_channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, SyncSender, channel, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -18,6 +18,266 @@ pub struct CompressedBlock {
     pub data: Result<Vec<u8>, ZipError>,
 }
 
+#[derive(Clone)]
+struct StreamMetrics {
+    bytes_read: Arc<AtomicUsize>,
+    bytes_written: Arc<AtomicUsize>,
+    queue_depth: Arc<AtomicUsize>,
+}
+
+struct WorkerRuntime<'a> {
+    jobs: Arc<Mutex<Receiver<Block>>>,
+    retry: SyncSender<Block>,
+    results: Sender<CompressedBlock>,
+    progress: ProgressSink,
+    controller: PipelineController,
+    metrics: StreamMetrics,
+    reader_done: Arc<AtomicBool>,
+    compressor: &'a (dyn Compressor + Send + Sync),
+}
+
+fn receive_job(runtime: &WorkerRuntime<'_>) -> Option<Option<Block>> {
+    let receiver = runtime.jobs.lock().unwrap();
+    match receiver.recv_timeout(std::time::Duration::from_millis(25)) {
+        Ok(block) => Some(Some(block)),
+        Err(RecvTimeoutError::Timeout) => {
+            let finished = runtime.reader_done.load(Ordering::Relaxed)
+                && runtime.metrics.queue_depth.load(Ordering::Relaxed) == 0;
+            (!finished).then_some(None)
+        }
+        Err(RecvTimeoutError::Disconnected) => None,
+    }
+}
+
+fn compress_job(worker_id: usize, block: Block, runtime: &WorkerRuntime<'_>) -> bool {
+    if worker_id >= runtime.controller.active_workers() {
+        return runtime.retry.send(block).is_ok();
+    }
+    let queue_depth = runtime.metrics.queue_depth.fetch_sub(1, Ordering::Relaxed) - 1;
+    runtime.progress.report(ProgressEvent::StreamProgress {
+        bytes_read: runtime.metrics.bytes_read.load(Ordering::Relaxed),
+        bytes_written: runtime.metrics.bytes_written.load(Ordering::Relaxed),
+        queue_depth,
+    });
+    runtime.progress.report(ProgressEvent::WorkerStatus {
+        worker_id,
+        stage: WorkerStage::Busy,
+        current_chunk: Some(block.seq_num),
+    });
+    runtime.progress.report(ProgressEvent::ChunkAssigned {
+        worker_id,
+        seq_num: block.seq_num,
+    });
+
+    let progress = runtime.progress.clone();
+    let total_bytes = block.data.len();
+    let seq_num = block.seq_num;
+    let processed = Arc::new(AtomicUsize::new(0));
+    let processed_callback = Arc::clone(&processed);
+    let compressed = runtime.compressor.compress_with_progress(
+        &block.data,
+        &move |input_bytes, output_bytes, duration| {
+            let current =
+                processed_callback.fetch_add(input_bytes, Ordering::Relaxed) + input_bytes;
+            progress.report(ProgressEvent::WorkerChunkProgress {
+                worker_id,
+                seq_num,
+                bytes_processed: current.min(total_bytes),
+                bytes_written: output_bytes,
+                total_bytes,
+                finalized: false,
+            });
+            progress.report(ProgressEvent::AvgCompressionTime(duration));
+        },
+        &runtime.controller,
+    );
+    let compressed_len = compressed.as_ref().map_or(0, Vec::len);
+    runtime.progress.report(ProgressEvent::WorkerChunkProgress {
+        worker_id,
+        seq_num,
+        bytes_processed: total_bytes,
+        bytes_written: compressed_len,
+        total_bytes,
+        finalized: true,
+    });
+    runtime.progress.report(ProgressEvent::WorkerStatus {
+        worker_id,
+        stage: WorkerStage::Hold,
+        current_chunk: Some(seq_num),
+    });
+    if runtime
+        .results
+        .send(CompressedBlock {
+            worker_id,
+            seq_num,
+            data: compressed,
+        })
+        .is_err()
+    {
+        return false;
+    }
+    runtime.progress.report(ProgressEvent::WorkerStatus {
+        worker_id,
+        stage: WorkerStage::Idle,
+        current_chunk: None,
+    });
+    true
+}
+
+fn run_worker(worker_id: usize, runtime: WorkerRuntime<'_>) {
+    crate::log_verbose!("Worker thread {} started", worker_id);
+    let mut last_enabled = None;
+    loop {
+        if runtime.controller.is_aborted() {
+            break;
+        }
+        let enabled = worker_id < runtime.controller.active_workers();
+        if last_enabled != Some(enabled) {
+            runtime
+                .progress
+                .report(ProgressEvent::WorkerAvailability { worker_id, enabled });
+            last_enabled = Some(enabled);
+        }
+        if !enabled {
+            if runtime.reader_done.load(Ordering::Relaxed)
+                && runtime.metrics.queue_depth.load(Ordering::Relaxed) == 0
+            {
+                break;
+            }
+            thread::sleep(std::time::Duration::from_millis(25));
+            continue;
+        }
+        match receive_job(&runtime) {
+            Some(Some(block)) => {
+                if !compress_job(worker_id, block, &runtime) {
+                    break;
+                }
+            }
+            Some(None) => {}
+            None => break,
+        }
+    }
+    crate::log_verbose!("Worker thread {} exiting", worker_id);
+}
+
+fn read_blocks(
+    input: &mut (dyn Read + Send),
+    jobs: SyncSender<Block>,
+    progress: ProgressSink,
+    controller: PipelineController,
+    metrics: StreamMetrics,
+    reader_done: Arc<AtomicBool>,
+) -> Result<(), ZipError> {
+    let result = read_blocks_inner(input, &jobs, &progress, &controller, &metrics);
+    reader_done.store(true, Ordering::Relaxed);
+    result
+}
+
+fn read_blocks_inner(
+    input: &mut (dyn Read + Send),
+    jobs: &SyncSender<Block>,
+    progress: &ProgressSink,
+    controller: &PipelineController,
+    metrics: &StreamMetrics,
+) -> Result<(), ZipError> {
+    let mut seq_num = 0u64;
+    loop {
+        if controller.is_aborted() {
+            break;
+        }
+        while controller.is_paused() {
+            if controller.is_aborted() {
+                return Ok(());
+            }
+            thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let chunk_size = controller.chunk_size();
+        let mut buffer = vec![0u8; chunk_size];
+        let mut size = 0;
+        while size < chunk_size && !controller.is_aborted() {
+            let bytes = input.read(&mut buffer[size..]).map_err(ZipError::Io)?;
+            if bytes == 0 {
+                break;
+            }
+            size += bytes;
+        }
+        if size == 0 {
+            break;
+        }
+        let total = metrics.bytes_read.fetch_add(size, Ordering::Relaxed) + size;
+        let queue_depth = metrics.queue_depth.fetch_add(1, Ordering::Relaxed) + 1;
+        progress.report(ProgressEvent::StreamProgress {
+            bytes_read: total,
+            bytes_written: metrics.bytes_written.load(Ordering::Relaxed),
+            queue_depth,
+        });
+        buffer.truncate(size);
+        progress.report(ProgressEvent::ChunkQueued {
+            seq_num,
+            bytes: size,
+        });
+        if jobs
+            .send(Block {
+                seq_num,
+                data: buffer,
+            })
+            .is_err()
+        {
+            break;
+        }
+        seq_num += 1;
+    }
+    Ok(())
+}
+
+struct OrderedWriter<'a> {
+    output: &'a mut dyn Write,
+    progress: ProgressSink,
+    controller: PipelineController,
+    metrics: StreamMetrics,
+    pending: BTreeMap<u64, Vec<u8>>,
+    next_seq_num: u64,
+}
+
+impl OrderedWriter<'_> {
+    fn flush_ready(&mut self) -> Result<(), ZipError> {
+        while let Some(data) = self.pending.remove(&self.next_seq_num) {
+            let total = self
+                .metrics
+                .bytes_written
+                .fetch_add(data.len(), Ordering::Relaxed)
+                + data.len();
+            self.progress.report(ProgressEvent::StreamProgress {
+                bytes_read: self.metrics.bytes_read.load(Ordering::Relaxed),
+                bytes_written: total,
+                queue_depth: self.metrics.queue_depth.load(Ordering::Relaxed),
+            });
+            self.output.write_all(&data)?;
+            self.progress.report(ProgressEvent::ChunkWritten {
+                seq_num: self.next_seq_num,
+            });
+            self.next_seq_num += 1;
+        }
+        Ok(())
+    }
+
+    fn run(&mut self, results: Receiver<CompressedBlock>) -> Result<(), ZipError> {
+        for result in results {
+            if self.controller.is_aborted() {
+                break;
+            }
+            let compressed = result.data?;
+            self.pending.insert(result.seq_num, compressed);
+            self.progress.report(ProgressEvent::ChunkPending {
+                worker_id: result.worker_id,
+                seq_num: result.seq_num,
+            });
+            self.flush_ready()?;
+        }
+        self.flush_ready()
+    }
+}
+
 /// Compresses data from `input` reader to `output` writer in Stream Mode using channels.
 pub fn compress_stream(
     input: &mut (dyn Read + Send),
@@ -27,6 +287,7 @@ pub fn compress_stream(
     sender: Sender<ProgressEvent>,
     controller: &PipelineController,
 ) -> Result<(), ZipError> {
+    let progress = ProgressSink::new(sender);
     let pool_size = if num_threads > 0 {
         num_threads
     } else {
@@ -47,6 +308,11 @@ pub fn compress_stream(
     let bytes_written = Arc::new(AtomicUsize::new(0));
     let queue_depth = Arc::new(AtomicUsize::new(0));
     let reader_done = Arc::new(AtomicBool::new(false));
+    let metrics = StreamMetrics {
+        bytes_read: Arc::clone(&bytes_read),
+        bytes_written: Arc::clone(&bytes_written),
+        queue_depth: Arc::clone(&queue_depth),
+    };
 
     // Use scoped threads to safely pass non-static references across thread boundaries
     let scope_res = thread::scope(|s| {
@@ -54,151 +320,17 @@ pub fn compress_stream(
 
         // Spawn worker threads
         for worker_id in 0..pool_size {
-            let job_rx = Arc::clone(&job_rx);
-            let job_tx_worker = job_tx.clone();
-            let result_tx = result_tx.clone();
-            let tx = sender.clone();
-            let ctrl = controller.clone();
-            let bytes_read_clone = bytes_read.clone();
-            let bytes_written_clone = bytes_written.clone();
-            let queue_depth_clone = queue_depth.clone();
-            let reader_done_clone = reader_done.clone();
-
-            let handle = s.spawn(move || {
-                crate::log_verbose!("Worker thread {} started", worker_id);
-                let mut last_enabled = None;
-                loop {
-                    if ctrl.is_aborted.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    let enabled = worker_id < ctrl.active_workers.load(Ordering::Relaxed);
-                    if last_enabled != Some(enabled) {
-                        let _ = tx.send(ProgressEvent::WorkerAvailability { worker_id, enabled });
-                        last_enabled = Some(enabled);
-                    }
-                    if !enabled {
-                        if reader_done_clone.load(Ordering::Relaxed)
-                            && queue_depth_clone.load(Ordering::Relaxed) == 0
-                        {
-                            break;
-                        }
-                        thread::sleep(std::time::Duration::from_millis(25));
-                        continue;
-                    }
-                    let block_opt = {
-                        let rx_guard = job_rx.lock().unwrap();
-                        match rx_guard.recv_timeout(std::time::Duration::from_millis(25)) {
-                            Ok(block) => Some(block),
-                            Err(RecvTimeoutError::Timeout) => {
-                                if reader_done_clone.load(Ordering::Relaxed)
-                                    && queue_depth_clone.load(Ordering::Relaxed) == 0
-                                {
-                                    break;
-                                }
-                                continue;
-                            }
-                            Err(RecvTimeoutError::Disconnected) => None,
-                        }
-                    };
-
-                    match block_opt {
-                        Some(block) => {
-                            if worker_id >= ctrl.active_workers.load(Ordering::Relaxed) {
-                                if job_tx_worker.send(block).is_err() {
-                                    break;
-                                }
-                                continue;
-                            }
-                            // Update queue depth on block take
-                            let q_depth = queue_depth_clone.fetch_sub(1, Ordering::Relaxed) - 1;
-                            let _ = tx.send(ProgressEvent::StreamProgress {
-                                bytes_read: bytes_read_clone.load(Ordering::Relaxed),
-                                bytes_written: bytes_written_clone.load(Ordering::Relaxed),
-                                queue_depth: q_depth,
-                            });
-                            let _ = tx.send(ProgressEvent::WorkerStatus {
-                                worker_id,
-                                status: "BUSY",
-                                current_chunk: Some(block.seq_num),
-                            });
-                            let _ = tx.send(ProgressEvent::ChunkAssigned {
-                                worker_id,
-                                seq_num: block.seq_num,
-                            });
-
-                            crate::log_verbose!(
-                                "Worker {} compressing block {}",
-                                worker_id,
-                                block.seq_num
-                            );
-                            let tx_inner = tx.clone();
-                            let total_bytes = block.data.len();
-                            let seq_num = block.seq_num;
-                            let processed = Arc::new(AtomicUsize::new(0));
-                            let processed_callback = processed.clone();
-                            let compressed = compressor.compress_with_progress(
-                                &block.data,
-                                &move |input_bytes, output_bytes, duration| {
-                                    let current = processed_callback
-                                        .fetch_add(input_bytes, Ordering::Relaxed)
-                                        + input_bytes;
-                                    let _ = tx_inner.send(ProgressEvent::WorkerChunkProgress {
-                                        worker_id,
-                                        seq_num,
-                                        bytes_processed: current.min(total_bytes),
-                                        bytes_written: output_bytes,
-                                        total_bytes,
-                                        finalized: false,
-                                    });
-                                    let _ =
-                                        tx_inner.send(ProgressEvent::AvgCompressionTime(duration));
-                                },
-                                &ctrl,
-                            );
-
-                            let compressed_len = compressed.as_ref().map(|v| v.len()).unwrap_or(0);
-                            let _ = tx.send(ProgressEvent::WorkerChunkProgress {
-                                worker_id,
-                                seq_num: block.seq_num,
-                                bytes_processed: block.data.len(),
-                                bytes_written: compressed_len,
-                                total_bytes: block.data.len(),
-                                finalized: true,
-                            });
-                            crate::log_verbose!(
-                                "Worker {} finished block {}: {} -> {} bytes",
-                                worker_id,
-                                block.seq_num,
-                                block.data.len(),
-                                compressed_len
-                            );
-
-                            let _ = tx.send(ProgressEvent::WorkerStatus {
-                                worker_id,
-                                status: "HOLD",
-                                current_chunk: Some(block.seq_num),
-                            });
-
-                            let result = CompressedBlock {
-                                worker_id,
-                                seq_num: block.seq_num,
-                                data: compressed,
-                            };
-                            if result_tx.send(result).is_err() {
-                                break;
-                            }
-
-                            let _ = tx.send(ProgressEvent::WorkerStatus {
-                                worker_id,
-                                status: "IDLE",
-                                current_chunk: None,
-                            });
-                        }
-                        None => break,
-                    }
-                }
-                crate::log_verbose!("Worker thread {} exiting", worker_id);
-            });
+            let runtime = WorkerRuntime {
+                jobs: Arc::clone(&job_rx),
+                retry: job_tx.clone(),
+                results: result_tx.clone(),
+                progress: progress.clone(),
+                controller: controller.clone(),
+                metrics: metrics.clone(),
+                reader_done: Arc::clone(&reader_done),
+                compressor,
+            };
+            let handle = s.spawn(move || run_worker(worker_id, runtime));
             workers.push(handle);
         }
 
@@ -206,143 +338,30 @@ pub fn compress_stream(
         drop(result_tx);
 
         // Spawn reader thread
-        let tx_reader = sender.clone();
-        let ctrl_reader = controller.clone();
-        let bytes_read_reader = bytes_read.clone();
-        let bytes_written_reader = bytes_written.clone();
-        let queue_depth_reader = queue_depth.clone();
-        let reader_done_reader = reader_done.clone();
-
-        let reader_handle = s.spawn(move || -> Result<(), ZipError> {
-            crate::log_verbose!("Reader thread started with dynamic block sizing");
-            let mut seq_num = 0u64;
-
-            loop {
-                if ctrl_reader.is_aborted.load(Ordering::Relaxed) {
-                    break;
-                }
-                // Check pause status in reader thread
-                while ctrl_reader.is_paused.load(Ordering::Relaxed) {
-                    if ctrl_reader.is_aborted.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-                if ctrl_reader.is_aborted.load(Ordering::Relaxed) {
-                    break;
-                }
-
-                let chunk_size = ctrl_reader.chunk_size.load(Ordering::Acquire);
-                let mut buffer = vec![0u8; chunk_size];
-                let mut bytes_read_so_far = 0;
-                while bytes_read_so_far < chunk_size {
-                    if ctrl_reader.is_aborted.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    let n = match input.read(&mut buffer[bytes_read_so_far..]) {
-                        Ok(n) => n,
-                        Err(error) => {
-                            reader_done_reader.store(true, Ordering::Relaxed);
-                            return Err(ZipError::Io(error));
-                        }
-                    };
-                    if n == 0 {
-                        break;
-                    }
-                    bytes_read_so_far += n;
-                }
-
-                if bytes_read_so_far == 0 {
-                    break;
-                }
-
-                // Update bytes read, queue depth
-                let total_r = bytes_read_reader.fetch_add(bytes_read_so_far, Ordering::Relaxed)
-                    + bytes_read_so_far;
-                let q_depth = queue_depth_reader.fetch_add(1, Ordering::Relaxed) + 1;
-                let _ = tx_reader.send(ProgressEvent::StreamProgress {
-                    bytes_read: total_r,
-                    bytes_written: bytes_written_reader.load(Ordering::Relaxed),
-                    queue_depth: q_depth,
-                });
-
-                crate::log_verbose!(
-                    "Reader queued block {} ({} bytes)",
-                    seq_num,
-                    bytes_read_so_far
-                );
-                buffer.truncate(bytes_read_so_far);
-                let block = Block {
-                    seq_num,
-                    data: buffer,
-                };
-                let _ = tx_reader.send(ProgressEvent::ChunkQueued {
-                    seq_num,
-                    bytes: bytes_read_so_far,
-                });
-                seq_num += 1;
-
-                if job_tx.send(block).is_err() {
-                    break; // Workers shut down
-                }
-            }
-            reader_done_reader.store(true, Ordering::Relaxed);
-            crate::log_verbose!("Reader thread reached EOF and exiting");
-            Ok(())
+        let reader_progress = progress.clone();
+        let reader_controller = controller.clone();
+        let reader_metrics = metrics.clone();
+        let reader_finished = Arc::clone(&reader_done);
+        let reader_handle = s.spawn(move || {
+            read_blocks(
+                input,
+                job_tx,
+                reader_progress,
+                reader_controller,
+                reader_metrics,
+                reader_finished,
+            )
         });
 
-        // Writer logic (runs on main thread within the scope)
-        let tx_writer = sender.clone();
-        let ctrl_writer = controller.clone();
-        let bytes_read_writer = bytes_read.clone();
-        let bytes_written_writer = bytes_written.clone();
-        let queue_depth_writer = queue_depth.clone();
-        let mut pending_blocks = BTreeMap::new();
-        let mut next_seq_num = 0u64;
-        let mut compression_error = None;
-
-        for result in result_rx {
-            if ctrl_writer.is_aborted.load(Ordering::Relaxed) {
-                break;
-            }
-            match result.data {
-                Ok(compressed_data) => {
-                    pending_blocks.insert(result.seq_num, compressed_data);
-                    let _ = tx_writer.send(ProgressEvent::ChunkPending {
-                        worker_id: result.worker_id,
-                        seq_num: result.seq_num,
-                    });
-                }
-                Err(e) => {
-                    crate::log_verbose!(
-                        "Writer encountered compression error on block {}",
-                        result.seq_num
-                    );
-                    compression_error = Some(e);
-                    break; // Abort on first error
-                }
-            }
-
-            while let Some(data) = pending_blocks.remove(&next_seq_num) {
-                crate::log_verbose!(
-                    "Writer flushing block {} ({} bytes) to output",
-                    next_seq_num,
-                    data.len()
-                );
-                let total_w =
-                    bytes_written_writer.fetch_add(data.len(), Ordering::Relaxed) + data.len();
-                let _ = tx_writer.send(ProgressEvent::StreamProgress {
-                    bytes_read: bytes_read_writer.load(Ordering::Relaxed),
-                    bytes_written: total_w,
-                    queue_depth: queue_depth_writer.load(Ordering::Relaxed),
-                });
-                output.write_all(&data)?;
-                let _ = tx_writer.send(ProgressEvent::ChunkWritten {
-                    seq_num: next_seq_num,
-                });
-                next_seq_num += 1;
-            }
+        let writer_result = OrderedWriter {
+            output,
+            progress: progress.clone(),
+            controller: controller.clone(),
+            metrics: metrics.clone(),
+            pending: BTreeMap::new(),
+            next_seq_num: 0,
         }
+        .run(result_rx);
 
         // Join reader thread and check for errors
         let reader_join = reader_handle.join();
@@ -354,31 +373,7 @@ pub fn compress_stream(
         }
         reader_join.unwrap()?;
 
-        if let Some(err) = compression_error {
-            return Err(err);
-        }
-
-        while let Some(data) = pending_blocks.remove(&next_seq_num) {
-            crate::log_verbose!(
-                "Writer flushing final block {} ({} bytes) to output",
-                next_seq_num,
-                data.len()
-            );
-            let total_w =
-                bytes_written_writer.fetch_add(data.len(), Ordering::Relaxed) + data.len();
-            let _ = tx_writer.send(ProgressEvent::StreamProgress {
-                bytes_read: bytes_read_writer.load(Ordering::Relaxed),
-                bytes_written: total_w,
-                queue_depth: queue_depth_writer.load(Ordering::Relaxed),
-            });
-            output.write_all(&data)?;
-            let _ = tx_writer.send(ProgressEvent::ChunkWritten {
-                seq_num: next_seq_num,
-            });
-            next_seq_num += 1;
-        }
-
-        Ok(())
+        writer_result
     });
 
     scope_res?;

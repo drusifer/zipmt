@@ -1651,3 +1651,358 @@ make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
 ---
 [<small>2026-07-18 18:43:51</small>] [**Neo**]->[**Trin**] *swe handoff*:
  Judge now applies an MLflow-style deterministic efficiency rubric: duplicate tools, unchanged retries, unchanged retests, search loops, and duplicate reads, with polling exemptions. Tests pass 16/16; full session finds one real unchanged retest. @Trin *qa verify judge efficiency
+
+---
+[<small>2026-07-18 18:54:05</small>] [**User**]->[**Morpheus**] *lead review*:
+ @Morpheus I have concerns about the Rust implementation code quality. Please review the current Rust code for smells, complexity, coupling, duplication, ownership/lifetime issues, and weak boundaries, then produce a prioritized refactoring plan with risks, sequencing, and validation gates. Why: we need an architecture-led path to reduce technical debt without regressing behavior or performance.
+
+---
+[<small>2026-07-18 18:55:31</small>] [**User**]->[**Morpheus**] *lead review addendum*:
+ @Morpheus Please use the Rust analyzers already exposed through Makefile targets as evidence for the review—especially rust-format-check, rust-clippy, rust-complexity, rust-cyclomatic, rust-dead-code, rust-audit, rust-unsafe, and the existing memory/profile reports. Why: the refactoring priorities should be tied to measured quality, complexity, safety, and performance findings rather than inspection alone.
+
+---
+[<small>2026-07-18 18:56:13</small>] [**Morpheus**]->[**all**] *lead review init*:
+ Morpheus initialized from persisted architecture state. I accept the Rust code-quality review and will combine Makefile analyzer evidence with structural review, then deliver a prioritized refactoring plan with risk and validation gates. Why: measured findings must drive sequencing without disturbing proven compression behavior.
+
+---
+[<small>2026-07-18 18:56:33</small>] [**Morpheus**]->[**User**] *lead review checkpoint*:
+ Morpheus entry checkpoint complete: protocol/state/artifacts loaded and analyzer-backed review scope persisted. Next I will collect the unchanged baseline once, map hotspots with Via, and rank refactors by risk and leverage. Why: short protocol checkpoints keep the architectural review reproducible and prevent untracked persona work.
+
+---
+[<small>2026-07-18 19:00:26</small>] [**User**]->[**Morpheus**] *lead review correction*:
+ @Morpheus Correction: Via does not support Rust in this project. Do not use it for the Rust review; use Makefile analyzer output, rust-code-analysis metrics, compiler/Clippy diagnostics, targeted source inspection, and existing perf/memory reports. Why: avoid false confidence and wasted queries against an unsupported language.
+
+---
+[<small>2026-07-18 19:01:58</small>] [**Morpheus**]->[**all**] *lead review resume*:
+ Morpheus resumed the Rust quality review under Bob Protocol. I will run the configured quality gates once, inspect analyzer-named hotspots, and produce the refactoring plan now. Why: the user requested an evidence-backed Tech Lead action, not another deferred handoff.
+
+---
+[<small>2026-07-18 19:03:01</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make rust-dead-code | /home/drusifer/Projects/zipmt/build/build.out
+Checking insta v1.48.0
+Checking regex v1.13.0
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 28.30s
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-18 19:05:10</small>] [**Morpheus**]->[**User**] *lead review handoff*:
+ Rust review complete. Analyzer evidence and architectural inspection identify the TUI boundary collapse as the largest debt, followed by Stream/Split orchestration; File-to-Stdout still has an unbounded whole-file read. The four-phase plan preserves buffer ownership, ordering, and measured performance. @User *approve maintenance sprint planning
+
+---
+[<small>2026-07-18 19:22:19</small>] [**Morpheus**]->[**User**] *lead handoff*:
+ Context-clear checkpoint saved. Rust review is complete; analyzer evidence, binding refactor order, artifact paths, and cold-start instructions are persisted. Do not rerun the unchanged baseline. @User *resume by approving maintenance sprint planning when ready
+
+---
+[<small>2026-07-18 19:43:10</small>] [**User**]->[**all**] *request*:
+ *bob-protocol init and *sprint refactor plan. Why: initialize shared persona state and produce a scoped refactor sprint plan from current project context.
+
+---
+[<small>2026-07-18 19:43:32</small>] [**Cypher**]->[**all**] *pm init*:
+ Cypher initialized for Tier 2 Rust refactor planning; prior review and user approval recovered. Why: maintenance scope needs testable user-facing criteria before technical phasing.
+
+---
+[<small>2026-07-18 19:44:47</small>] [**Cypher**]->[**Morpheus**] *pm handoff*:
+ Stories and acceptance gates are recorded in the combined Tier 2 artifact. @Morpheus *lead arch ratify Rust refactor sprint. Why: technical sequencing and invariants must be binding before user review.
+
+---
+[<small>2026-07-18 19:44:47</small>] [**Morpheus**]->[**all**] *lead init*:
+ Morpheus initialized and loaded the completed Rust review plus combined sprint artifact. Why: ratify scope against measured hotspots and preserve compression invariants.
+
+---
+[<small>2026-07-18 19:45:15</small>] [**Morpheus**]->[**Smith**] *lead handoff*:
+ Architecture and sequencing ratified with measured invariants. @Smith *user review combined Rust refactor stories and architecture. Why: Tier 2 requires one usability/value gate before task planning.
+
+---
+[<small>2026-07-18 19:45:23</small>] [**Smith**]->[**all**] *user review init*:
+ Smith initialized for the combined Tier 2 gate. Why: verify that internal refactoring preserves user control, status visibility, compatibility, and recoverable errors.
+
+---
+[<small>2026-07-18 19:45:48</small>] [**Smith**]->[**Mouse**] *user approve*:
+ *user approve. Combined Rust refactor stories and architecture preserve user-visible behavior with measurable regression gates. @Mouse *sm plan Rust refactor sprint. Why: approved scope is ready for authoritative phase decomposition.
+
+---
+[<small>2026-07-18 19:45:58</small>] [**Mouse**]->[**all**] *sm init*:
+ Mouse initialized from approved Tier 2 artifact and sprint history. Why: replace the completed task board with small dependency-ordered Rust refactor phases and explicit gates.
+
+---
+[<small>2026-07-18 19:47:10</small>] [**Mouse**]->[**Neo**] *sm handoff*:
+ Rust refactor sprint planned: 11 tasks in five gated phases are authoritative in root task.md. @Neo *swe impl Task 0.1 when implementation is authorized. Why: bounded File-to-Stdout is the lowest-risk prerequisite for later structural work.
+
+---
+[<small>2026-07-18 19:48:18</small>] [**User**]->[**all**] *request*:
+ *sprint impl plan. Why: execute the approved Rust refactor sprint beginning with the next ready phase.
+
+---
+[<small>2026-07-18 19:48:18</small>] [**Neo**]->[**all**] *swe impl init*:
+ Neo initialized for Phase 0 Task 0.1 only. Why: replace File-to-Stdout whole-input allocation with bounded streaming before broader refactoring.
+
+---
+[<small>2026-07-18 19:49:19</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make rust-format-check | /home/drusifer/Projects/zipmt/build/build.out
+make[1]: Entering directory '/home/drusifer/Projects/zipmt'
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-18 19:49:50</small>] [**Neo**]->[**Trin**] *swe handoff*:
+ Task 0.1 complete: File-to-Stdout now streams from File; focused equivalence test and format check pass. @Trin *qa uat Task 0.1. Why: independently verify bounded-path correctness before Neo begins characterization.
+
+---
+[<small>2026-07-18 19:50:02</small>] [**Trin**]->[**all**] *qa init*:
+ Trin initialized for Task 0.1 UAT with the approved bounded-I/O criteria and Neo evidence loaded. Why: independently review the path change without repeating an unchanged test.
+
+---
+[<small>2026-07-18 19:50:02</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make judge-trace | /home/drusifer/Projects/zipmt/build/build.out
+Written: /tmp/judge-rust-refactor-task-0-1.md
+29 tool calls · 0 flags · 1 sessions
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-18 19:50:30</small>] [**Trin**]->[**Morpheus**] *qa handoff*:
+ Task 0.1 UAT passed: direct File reader, exact decompression evidence, format pass, zero Judge flags. @Morpheus *lead review Task 0.1. Why: confirm boundary change preserves the approved architecture before Task 0.2.
+
+---
+[<small>2026-07-18 19:50:30</small>] [**Morpheus**]->[**all**] *lead review init*:
+ Morpheus initialized for Task 0.1 review with implementation and UAT evidence loaded. Why: verify the fix removes allocation without expanding orchestration scope.
+
+---
+[<small>2026-07-18 19:51:07</small>] [**Morpheus**]->[**Neo**] *lead handoff*:
+ Task 0.1 architecture review approved; allocation is removed without changing Stream contracts. @Neo *swe impl Task 0.2. Why: characterize pairings, cleanup, ordering, and bounded RSS before closing Phase 0.
+
+---
+[<small>2026-07-18 19:51:07</small>] [**Neo**]->[**all**] *swe impl resume*:
+ Neo resumed for Task 0.2 characterization only. Why: complete Phase 0 evidence around the newly bounded File-to-Stdout path.
+
+---
+[<small>2026-07-18 19:53:41</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make rust-dead-code | /home/drusifer/Projects/zipmt/build/build.out
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.57s
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-18 19:54:30</small>] [**Neo**]->[**Trin**] *swe handoff*:
+ Task 0.2 complete: four I/O pairings, 128 MiB bounded-RSS, exact ordering, and SIGINT cleanup characterized. @Trin *qa uat Phase 0. Why: independently gate behavior and classify known baseline quality debt.
+
+---
+[<small>2026-07-18 19:54:30</small>] [**Trin**]->[**all**] *qa resume*:
+ Trin resumed for Phase 0 UAT with implementation, test, RSS, cleanup, and analyzer evidence loaded. Why: verify acceptance criteria without repeating unchanged tests.
+
+---
+[<small>2026-07-18 19:54:30</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make judge-trace | /home/drusifer/Projects/zipmt/build/build.out
+Written: /tmp/judge-rust-refactor-phase-0.md
+46 tool calls · 0 flags · 1 sessions
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-18 19:55:06</small>] [**Trin**]->[**Morpheus**] *qa handoff*:
+ Phase 0 behavioral UAT passed; all new acceptance evidence is green and Judge has zero flags. @Morpheus *lead review Phase 0. Why: explicitly decide progression with known baseline debt assigned to later phases.
+
+---
+[<small>2026-07-18 19:55:06</small>] [**Morpheus**]->[**all**] *lead resume*:
+ Morpheus resumed for Phase 0 final review. Why: validate bounded-I/O architecture and assign baseline quality debt without weakening final gates.
+
+---
+[<small>2026-07-18 19:55:57</small>] [**Morpheus**]->[**Neo**] *lead handoff*:
+ Phase 0 approved. Bounded I/O and characterization gates pass; unchanged Clippy/complexity debt remains binding for Phases 1/2 and final completion. @Neo *swe impl Phase 1 Task 1.1 when authorized. Why: typed state is the next dependency.
+
+---
+[<small>2026-07-18 19:56:57</small>] [**User**]->[**all**] *request*:
+ *sprint till done. Why: continue the approved Rust Boundary Refactoring sprint through all remaining implementation, QA, architecture, UX, and close gates.
+
+---
+[<small>2026-07-18 19:56:57</small>] [**Neo**]->[**all**] *swe impl resume*:
+ Neo resumed at Phase 1 Task 1.1. Why: introduce typed mode/lifecycle state without combining reducer or rendering moves.
+
+---
+[<small>2026-07-18 19:58:27</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make rust-format-check | /home/drusifer/Projects/zipmt/build/build.out
+make[1]: Entering directory '/home/drusifer/Projects/zipmt'
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-18 19:59:05</small>] [**Neo**]->[**Trin**] *swe handoff*:
+ Task 1.1 complete: typed ModeState and WorkerStage now flow through events, reducer, rendering, and cleanup; focused test/format pass. @Trin *qa uat Task 1.1. Why: verify lifecycle equivalence before reducer extraction.
+
+---
+[<small>2026-07-18 19:59:05</small>] [**Trin**]->[**all**] *qa resume*:
+ Trin resumed for Task 1.1 UAT. Why: inspect typed lifecycle transitions without repeating unchanged tests.
+
+---
+[<small>2026-07-18 19:59:31</small>] [**Trin**]->[**Morpheus**] *qa handoff*:
+ Task 1.1 UAT passed: lifecycle is typed end-to-end, labels equivalent, and scope remains isolated. @Morpheus *lead review Task 1.1. Why: approve the state seam before pure reducer extraction.
+
+---
+[<small>2026-07-18 19:59:31</small>] [**Morpheus**]->[**all**] *lead resume*:
+ Morpheus resumed for Task 1.1 review. Why: verify typed state establishes the intended seam without premature module moves.
+
+---
+[<small>2026-07-18 20:01:43</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make rust-format-check | /home/drusifer/Projects/zipmt/build/build.out
+make[1]: Entering directory '/home/drusifer/Projects/zipmt'
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-18 20:02:09</small>] [**Neo**]->[**Trin**] *swe handoff*:
+ Task 1.2 complete: reducer is timestamp-injected/I-O-free and rendering uses a pure body-layout profile; focused test/format pass. @Trin *qa uat Task 1.2. Why: verify deterministic seams before runtime/render separation.
+
+---
+[<small>2026-07-18 20:02:09</small>] [**Trin**]->[**all**] *qa resume*:
+ Trin resumed for Task 1.2 UAT. Why: inspect reducer purity, effects, and geometry without repeating unchanged tests.
+
+---
+[<small>2026-07-18 20:02:37</small>] [**Trin**]->[**Morpheus**] *qa handoff*:
+ Task 1.2 UAT passed: reducer is I/O-free with explicit runtime effect; deterministic time/layout tests pass. @Morpheus *lead review Task 1.2. Why: approve the seam before module separation.
+
+---
+[<small>2026-07-18 20:02:37</small>] [**Morpheus**]->[**all**] *lead resume*:
+ Morpheus resumed for Task 1.2 review. Why: verify reducer/effect direction and pure view boundary.
+
+---
+[<small>2026-07-18 20:07:36</small>] [**make**]->[**all**] *build*:
+ Build FAILED exit=2 | make rust-complexity | /home/drusifer/Projects/zipmt/build/build.out
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+make[1]: *** [Makefile:54: rust-complexity] Error 101
+
+---
+[<small>2026-07-18 20:08:46</small>] [**Neo**]->[**Trin**] *swe handoff*:
+ Task 1.3 boundaries/full suite/Clippy are green, but TUI run/draw still fail complexity. @Trin *qa uat Phase 1. Why: record the hard gate and precise fix scope.
+
+---
+[<small>2026-07-18 20:08:47</small>] [**Trin**]->[**all**] *qa resume*:
+ Trin resumed for Phase 1 UAT. Why: confirm green behavior/boundaries while enforcing the configured TUI complexity gate.
+
+---
+[<small>2026-07-18 20:09:03</small>] [**Trin**]->[**Neo**] *qa reject*:
+ Phase 1 UAT REJECTED. TUI runtime is 39/20 and draw closure 49/20; all other gates pass. @Neo *swe fix Phase 1 complexity. Why: split event handlers and render panels before progression.
+
+---
+[<small>2026-07-18 20:09:03</small>] [**Neo**]->[**all**] *swe fix resume*:
+ Neo resumed for first Phase 1 complexity fix. Why: extract bounded runtime handlers and rendering helpers without behavior changes.
+
+---
+[<small>2026-07-18 20:15:10</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make rust-pty-smoke | /home/drusifer/Projects/zipmt/build/build.out
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-18 20:15:37</small>] [**Neo**]->[**Trin**] *swe handoff*:
+ Phase 1 fix complete: TUI complexity cleared; full suite/Clippy and 80x22/120x30 real PTY pass. @Trin *qa uat Phase 1 retry. Why: re-evaluate the rejected gate after one bounded correction.
+
+---
+[<small>2026-07-18 20:15:37</small>] [**Trin**]->[**all**] *qa resume*:
+ Trin resumed Phase 1 UAT retry. Why: confirm the complexity correction and all behavioral gates before UX review.
+
+---
+[<small>2026-07-18 20:15:37</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make judge-trace | /home/drusifer/Projects/zipmt/build/build.out
+Written: /tmp/judge-rust-refactor-phase-1.md
+131 tool calls · 0 flags · 1 sessions
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-18 20:16:07</small>] [**Trin**]->[**Smith**] *qa handoff*:
+ Phase 1 UAT passed on retry: full suite, zero Clippy, TUI complexity, both PTY sizes, and Judge are green. @Smith *user test Phase 1. Why: required real-user terminal gate before architecture approval.
+
+---
+[<small>2026-07-18 20:16:07</small>] [**Smith**]->[**all**] *user test resume*:
+ Smith resumed for Phase 1 user testing. Why: inspect the actual PTY transcripts for status visibility, completion, and terminal cleanup without repeating unchanged tests.
+
+---
+[<small>2026-07-18 20:17:39</small>] [**Smith**]->[**User**] *user blocked*:
+ *user blocked Phase 1 PTY gate after two approaches: first waited for Enter; second captured only terminal escapes and hid a failed dashboard assertion. Why: anti-loop requires user direction before a third attempt using enforced failures and nontrivial input.
+
+---
+[<small>2026-07-20 10:26:27</small>] [**User**]->[**Smith**] *user feedback*:
+ Tested both modes at 80x22: rendering otherwise looks good, but worker and slice areas both need scrolling. Why: bounded panels must keep off-screen work reachable.
+
+---
+[<small>2026-07-20 10:28:12</small>] [**Smith**]->[**Trin**] *user bug*:
+ CMD: run both TUI modes at 80x22 | EXPECTED: reach every slice and worker | ACTUAL: bounded work panels lack consistent discoverable scrolling | UX ISSUE: hidden work cannot be inspected. Triage required. Why: user testing rejected Phase 1 UX gate.
+
+---
+[<small>2026-07-20 10:30:54</small>] [**make**]->[**all**] *build*:
+ Build FAILED exit=2 | make test-rust | /home/drusifer/Projects/zipmt/build/build.out
+
+test result: FAILED. 50 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.56s
+
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-20 10:31:35</small>] [**Trin**]->[**User**] *qa blocked*:
+ Phase 1 scroll correction: focused tests pass; full cycle 1 found stale UX baselines; cycle 2 passed 50 tests and found one assertion typo (fixture has 12 slices, not 8), now corrected. Anti-loop forbids cycle 3 without manual direction. Why: implementation is ready but final suite/Clippy/complexity need authorization.
+
+---
+[<small>2026-07-20 10:34:41</small>] [**make**]->[**all**] *build*:
+ Build FAILED exit=2 | make rust-complexity | /home/drusifer/Projects/zipmt/build/build.out
+make[1]: *** [Makefile:54: rust-complexity] Error 101
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-20 10:35:22</small>] [**Trin**]->[**Smith**] *qa handoff*:
+ Phase 1 scroll correction verified: full Rust suite green (51 lib, 5 bin, 11 integration, docs), strict Clippy clean, focused paging/wheel/render tests pass; complexity contains only Phase 2 hotspots. Why: UX gate can be re-evaluated.
+
+---
+[<small>2026-07-20 10:35:22</small>] [**Smith**]->[**Morpheus**] *user approve*:
+ Phase 1 UX approved. User 80x22 evidence plus corrected PageUp/PageDown, scoped wheel navigation, clamped ranges, [Pg↕] cues, focused tests, and full regression close the defect. Why: no remaining Phase 1 usability blocker.
+
+---
+[<small>2026-07-20 10:37:58</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make rust-clippy | /home/drusifer/Projects/zipmt/build/build.out
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.11s
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-20 10:38:23</small>] [**Neo**]->[**Trin**] *swe handoff*:
+ Task 2.1 Stream roles extracted. Focused Stream tests, full suite, and strict Clippy pass; Stream complexity hotspots are cleared. Why: verify ordering, gating, cancellation, and role boundaries.
+
+---
+[<small>2026-07-20 10:38:23</small>] [**Trin**]->[**Neo**] *qa approve*:
+ Task 2.1 accepted: reader/worker/ordered-writer roles preserve bounded channels, dynamic gating, output order, and full regression. Proceed to Task 2.2. Why: behavior and quality evidence are green.
+
+---
+[<small>2026-07-20 10:56:01</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make rust-benchmark-compare | /home/drusifer/Projects/zipmt/build/build.out
+runs=1
+baseline_mean_seconds=0.012228
+candidate_mean_seconds=0.011596
+delta_percent=-5.17
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-20 10:57:10</small>] [**Neo**]->[**Trin**] *swe handoff*:
+ Sprint implementation and repeatable benchmark automation complete. Full tests/release/quality/audit pass; A/B delta is -1.15%; unnamed Split temps close termination cleanup. Why: final UAT evidence is complete.
+
+---
+[<small>2026-07-20 10:57:10</small>] [**Trin**]->[**Morpheus**] *qa approve*:
+ Final UAT passed: behavior, cleanup, UX, release, audit, formatting, Clippy, complexity, metrics, dead code, profiles, and repeatable performance gate are green. Why: sprint may close.
+
+---
+[<small>2026-07-20 10:57:10</small>] [**Morpheus**]->[**Mouse**] *lead approve*:
+ Rust boundary refactor architecture approved. All planned seams are explicit and measured performance improved 1.15%. Why: close sprint and retain benchmark automation.
+
+---
+[<small>2026-07-20 10:57:10</small>] [**Mouse**]->[**all**] *sm close*:
+ Rust boundary refactor sprint complete: 11/11 tasks and Definition of Done closed. Why: all implementation, QA, UX, architecture, cleanup, quality, security, and performance gates pass.
+
+---
+[<small>2026-07-20 11:02:04</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make rust-benchmark | /home/drusifer/Projects/zipmt/build/build.out
+algorithm: xz
+level: 1
+threads: 2
+mean_seconds: 8.246650
+throughput_mib_s: 3.880
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-20 11:02:48</small>] [**Neo**]->[**Trin**] *swe benchmark*:
+ Longitudinal benchmark target verified: stable 32 MiB workload hash 5efd3517…, 3-run mean 8.264363s / 3.872 MiB/s appended as valid YAML for revision 33cc535113ed dirty=true. Why: performance evidence now persists across iterations.
+
+---
+[<small>2026-07-20 11:02:48</small>] [**Mouse**]->[**all**] *sm retro*:
+ Retrospective complete. Keep the benchmark workload stable per host, append revision-tagged YAML after hot-path changes, and record a clean committed revision before release. Why: numeric history is now the durable performance gate.
+
+---
+[<small>2026-07-20 11:05:56</small>] [**Morpheus**]->[**User**] *lead assessment*:
+ Quality is strong: tests/release/audit and strict Clippy, complexity, formatting, metrics, dead-code gates are green. Best next targets: 1) split draw_tui_impl (890 SLOC; render closures dominate), 2) decompose reduce_progress_event by event family, 3) replace CompressionPipeline::run I/O-pairing match with adapters. Keep codec/Stream/Split hot paths stable. Why: these are remaining concentration/coupling hotspots, not measured performance bottlenecks.

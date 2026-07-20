@@ -3,6 +3,8 @@
 This file tracks the HCI evaluations, gate reviews, and usability criteria maintained by the HCI Expert (Smith).
 
 ## Recent Decisions
+- **Phase 1 PTY gate blocked after two approaches (2026-07-18)**: First PTY automation waited at interactive completion; second exited with valid output/terminal cleanup but captured no dashboard text, and semicolon chaining hid the failed assertion. Anti-loop requires user direction before a third approach using nontrivial input and enforced assertion propagation.
+- **Approved combined Rust refactor plan (2026-07-18)**: The Tier 2 stories and architecture preserve CLI/TUI behavior, output compatibility, progress visibility, user controls, diagnostics, cancellation, cleanup, terminal layouts, and real-PTY completion. Bounded RSS, decompression equivalence, ordering, quality gates, and a 5% throughput budget are blocking acceptance criteria.
 - **Judge tool/skill TES (2026-07-18)**: Scored the complete active Codex rollout from its July 16 start at 82/100. Nine raw flags reduce to one confirmed Via bypass. Active/latest discovery, Codex skill-load visibility, and shell-rule false positives require correction.
 - **Approved completion/smoothed I/O real UX (2026-07-17)**: Actual 80x22/120x30 sessions retain COMPLETE with final stats and close guidance; RATE exposes its MA5 overlay and stable labels.
 - **Approved real Split TUI uplift UX (2026-07-17)**: Actual 80x22 and 120x30 Split runs show readable aggregate/lifecycle state, explicit range/overflow, mirrored chart parity, larger-terminal expansion, and honest fixed Level/Partition/Pool presentation.
@@ -32,4 +34,12 @@ This file tracks the HCI evaluations, gate reviews, and usability criteria maint
 - **Heuristic 8 (Aesthetic & Minimalist Design)**: Centered layout logic (constrained to 80x15 viewport) looks stunning on any terminal size and avoids visual noise, organizing blocks via structured boundaries and unified labels.
 
 ---
-*Last updated: 2026-07-18T18:34:00-04:00*
+*Last updated: 2026-07-18T20:17:00-04:00*
+# Agent Local Context
+
+- **Phase 1 work-panel UX approved (2026-07-20):** User validation at 80x22
+  found the rest of both modes good and identified inaccessible bounded work
+  lists. The correction gives Slice and Worker panels consistent PageUp/PageDown
+  paging, left-panel wheel scrolling, clamped offsets, visible ranges, remaining
+  counts, and a `[Pg↕]` recognition cue. Focused interaction/render tests and the
+  full Rust regression suite pass.

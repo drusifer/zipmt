@@ -1,13 +1,16 @@
 # Next Steps
 
 ## Immediate Next Action
-- Smith performs Gate 1 review of `docs/USER_STORIES_SPLIT_TUI_UPLIFT.md`.
+- Morpheus ratifies the binding architecture and sequence in
+  `docs/USER_STORIES_RUST_REFACTOR.md`.
 
 ## Waiting On
-- Smith story approval before Morpheus architecture.
+- Morpheus architecture ratification, then Smith's combined Tier 2 review.
 
 ## Planned Work
-- [ ] Hand approved stories to Morpheus for architecture.
+- [ ] Address any product-scope rejection raised by Smith.
+- [ ] After approval, Mouse writes the authoritative sprint phases to root
+  `task.md`.
 
 ---
-*Last updated: 2026-07-17T14:51:00-04:00*
+*Last updated: 2026-07-18T19:44:00-04:00*

@@ -5,7 +5,6 @@ use flate2::Compression;
 use flate2::read::MultiGzDecoder;
 use flate2::write::GzEncoder;
 use std::io::{Read, Write};
-use std::sync::atomic::Ordering;
 use xz2::read::XzDecoder;
 use xz2::write::XzEncoder;
 
@@ -107,24 +106,47 @@ impl Write for CountingWriter<'_> {
 }
 
 fn check_throttle(controller: &PipelineController) {
-    let delay = controller.throttle_delay_ms.load(Ordering::Relaxed);
+    let delay = controller.throttle_delay_ms();
     if delay > 0 {
         std::thread::sleep(std::time::Duration::from_millis(delay));
     }
 }
 
 fn check_control_state(controller: &PipelineController) -> Result<(), ZipError> {
-    if controller.is_aborted.load(Ordering::Relaxed) {
+    if controller.is_aborted() {
         return Err(ZipError::Compression("Aborted".into()));
     }
-    while controller.is_paused.load(Ordering::Relaxed) {
-        if controller.is_aborted.load(Ordering::Relaxed) {
+    while controller.is_paused() {
+        if controller.is_aborted() {
             return Err(ZipError::Compression("Aborted".into()));
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
     check_throttle(controller);
     Ok(())
+}
+
+fn copy_controlled(
+    reader: &mut dyn Read,
+    controller: &PipelineController,
+    on_progress: &(dyn Fn(usize, usize, std::time::Duration) + Send + Sync),
+    mut write_chunk: impl FnMut(&[u8]) -> Result<usize, ZipError>,
+) -> Result<(), ZipError> {
+    let mut buffer = vec![0_u8; controller.chunk_size()];
+    loop {
+        let requested = controller.chunk_size();
+        if buffer.len() != requested {
+            buffer.resize(requested, 0);
+        }
+        let bytes_read = reader.read(&mut buffer)?;
+        if bytes_read == 0 {
+            return Ok(());
+        }
+        check_control_state(controller)?;
+        let start = std::time::Instant::now();
+        let bytes_written = write_chunk(&buffer[..bytes_read])?;
+        on_progress(bytes_read, bytes_written, start.elapsed());
+    }
 }
 
 /// Gzip compressor adapter.
@@ -140,7 +162,7 @@ impl Compressor for GzipCompressor {
         on_progress: &(dyn Fn(usize, usize, std::time::Duration) + Send + Sync),
         controller: &PipelineController,
     ) -> Result<usize, ZipError> {
-        let level = controller.compression_level.load(Ordering::Relaxed);
+        let level = controller.compression_level();
         let counting_writer = CountingWriter {
             inner: writer,
             bytes_written: 0,
@@ -164,28 +186,16 @@ impl Compressor for GzipCompressor {
         on_progress: &(dyn Fn(usize, usize, std::time::Duration) + Send + Sync),
         controller: &PipelineController,
     ) -> Result<usize, ZipError> {
-        let level = controller.compression_level.load(Ordering::Relaxed);
+        let level = controller.compression_level();
         let counting_writer = CountingWriter {
             inner: writer,
             bytes_written: 0,
         };
         let mut encoder = GzEncoder::new(counting_writer, Compression::new(level));
-        let mut buffer = vec![0_u8; controller.chunk_size.load(Ordering::Acquire)];
-        loop {
-            let requested = controller.chunk_size.load(Ordering::Acquire);
-            if buffer.len() != requested {
-                buffer = vec![0_u8; requested];
-            }
-            let bytes_read = reader.read(&mut buffer)?;
-            if bytes_read == 0 {
-                break;
-            }
-            check_control_state(controller)?;
-            let start = std::time::Instant::now();
-            encoder.write_all(&buffer[..bytes_read])?;
-            let duration = start.elapsed();
-            on_progress(bytes_read, encoder.get_ref().bytes_written, duration);
-        }
+        copy_controlled(reader, controller, on_progress, |chunk| {
+            encoder.write_all(chunk)?;
+            Ok(encoder.get_ref().bytes_written)
+        })?;
         let result = encoder.finish()?;
         Ok(result.bytes_written)
     }
@@ -213,7 +223,7 @@ impl Compressor for Bzip2Compressor {
         on_progress: &(dyn Fn(usize, usize, std::time::Duration) + Send + Sync),
         controller: &PipelineController,
     ) -> Result<usize, ZipError> {
-        let level = controller.compression_level.load(Ordering::Relaxed);
+        let level = controller.compression_level();
         let counting_writer = CountingWriter {
             inner: writer,
             bytes_written: 0,
@@ -237,28 +247,16 @@ impl Compressor for Bzip2Compressor {
         on_progress: &(dyn Fn(usize, usize, std::time::Duration) + Send + Sync),
         controller: &PipelineController,
     ) -> Result<usize, ZipError> {
-        let level = controller.compression_level.load(Ordering::Relaxed);
+        let level = controller.compression_level();
         let counting_writer = CountingWriter {
             inner: writer,
             bytes_written: 0,
         };
         let mut encoder = BzEncoder::new(counting_writer, bzip2::Compression::new(level));
-        let mut buffer = vec![0_u8; controller.chunk_size.load(Ordering::Acquire)];
-        loop {
-            let requested = controller.chunk_size.load(Ordering::Acquire);
-            if buffer.len() != requested {
-                buffer = vec![0_u8; requested];
-            }
-            let bytes_read = reader.read(&mut buffer)?;
-            if bytes_read == 0 {
-                break;
-            }
-            check_control_state(controller)?;
-            let start = std::time::Instant::now();
-            encoder.write_all(&buffer[..bytes_read])?;
-            let duration = start.elapsed();
-            on_progress(bytes_read, encoder.get_ref().bytes_written, duration);
-        }
+        copy_controlled(reader, controller, on_progress, |chunk| {
+            encoder.write_all(chunk)?;
+            Ok(encoder.get_ref().bytes_written)
+        })?;
         let result = encoder.finish()?;
         Ok(result.bytes_written)
     }
@@ -286,7 +284,7 @@ impl Compressor for XzCompressor {
         on_progress: &(dyn Fn(usize, usize, std::time::Duration) + Send + Sync),
         controller: &PipelineController,
     ) -> Result<usize, ZipError> {
-        let level = controller.compression_level.load(Ordering::Relaxed);
+        let level = controller.compression_level();
         let counting_writer = CountingWriter {
             inner: writer,
             bytes_written: 0,
@@ -310,28 +308,16 @@ impl Compressor for XzCompressor {
         on_progress: &(dyn Fn(usize, usize, std::time::Duration) + Send + Sync),
         controller: &PipelineController,
     ) -> Result<usize, ZipError> {
-        let level = controller.compression_level.load(Ordering::Relaxed);
+        let level = controller.compression_level();
         let counting_writer = CountingWriter {
             inner: writer,
             bytes_written: 0,
         };
         let mut encoder = XzEncoder::new(counting_writer, level);
-        let mut buffer = vec![0_u8; controller.chunk_size.load(Ordering::Acquire)];
-        loop {
-            let requested = controller.chunk_size.load(Ordering::Acquire);
-            if buffer.len() != requested {
-                buffer = vec![0_u8; requested];
-            }
-            let bytes_read = reader.read(&mut buffer)?;
-            if bytes_read == 0 {
-                break;
-            }
-            check_control_state(controller)?;
-            let start = std::time::Instant::now();
-            encoder.write_all(&buffer[..bytes_read])?;
-            let duration = start.elapsed();
-            on_progress(bytes_read, encoder.get_ref().bytes_written, duration);
-        }
+        copy_controlled(reader, controller, on_progress, |chunk| {
+            encoder.write_all(chunk)?;
+            Ok(encoder.get_ref().bytes_written)
+        })?;
         let result = encoder.finish()?;
         Ok(result.bytes_written)
     }

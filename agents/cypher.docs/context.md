@@ -3,6 +3,7 @@
 This file tracks the current state of product stories, features, and roadmaps maintained by the Product Manager (Cypher).
 
 ## Recent Decisions
+- **Rust boundary refactoring sprint (2026-07-18)**: Defined five maintenance stories covering bounded File-to-Stdout streaming, typed/testable TUI seams, explicit Stream/Split orchestration, encapsulated controls/shared codec loops, and a smaller application shell. Compatibility, bounded memory, ordering, cleanup, strict quality gates, and a 5% performance regression budget are binding acceptance criteria.
 - **Split-mode TUI uplift stories (2026-07-17)**: Uplift centers on aggregate progress/ETA, one-based sector lifecycle rows, mirrored rate/cumulative I/O history, responsive sector paging, and truthful startup-fixed Partition/Pool controls without changing Split compression semantics.
 - **Launched mirrored I/O chart increment (2026-07-17)**: Stream mode now shows smooth shared-scale input/output history with RATE and CUMULATIVE views, preserves the lifecycle panel, and expands chart plus four knob gauges on taller terminals.
 - **I/O chart follow-on requirements (2026-07-16)**: Stream mode needs a mirrored scrolling bytes-in/top and bytes-out/bottom chart with a visible `I` toggle between rate deltas and cumulative totals. It must preserve the 80x22 contract and lifecycle flow while using taller terminals for both more chart space and taller four-knob gauges.
@@ -15,4 +16,4 @@ This file tracks the current state of product stories, features, and roadmaps ma
 - **Drafted LCARS Upgrade Stories**: Created `docs/USER_STORIES_RATATUI_UPGRADE.md` containing stories and acceptance criteria for R1 (Front-end abstraction), R2 (Modular library API), R3 (CLI and -T flag restoration), R4 (Star Trek LCARS vertical sliders, keyboard Tab/Up/Down adjustments, mouse integration), and R5 (Decoupled layout snapshot tests).
 
 ---
-*Last updated: 2026-07-17T14:51:00-04:00*
+*Last updated: 2026-07-18T19:44:00-04:00*

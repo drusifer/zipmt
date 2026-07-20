@@ -1,19 +1,19 @@
 # Current Task
 
-**Status:** Completed / handed to Gate 1
+**Status:** Completed / handed to architecture ratification
 **Assigned to:** Cypher
-**Started:** 2026-07-17T14:48:25-04:00
-**Finished:** 2026-07-17T14:51:00-04:00
+**Started:** 2026-07-18T19:43:00-04:00
+**Finished:** 2026-07-18T19:44:00-04:00
 
 ## Task Description
-Define Split-mode TUI uplift stories and acceptance criteria.
+Define Rust boundary-refactoring stories and acceptance criteria for the
+approved Tier 2 maintenance sprint.
 
 ## Progress
-- [x] Audited the existing Split snapshot and execution semantics.
-- [x] Defined aggregate progress and sector lifecycle requirements.
-- [x] Defined mirrored Split I/O history parity.
-- [x] Defined truthful fixed Partition/Pool controls.
-- [x] Defined responsive paging, layout, regression, and real-PTY gates.
+- [x] Recovered the approved analyzer-backed review.
+- [x] Scoped five behavior-preserving maintenance stories.
+- [x] Defined bounded-memory, compatibility, quality, and performance gates.
+- [x] Recorded explicit non-goals and the sprint Definition of Done.
 
 ## Blockers
 None
@@ -22,4 +22,4 @@ None
 None yet
 
 ---
-*Last updated: 2026-07-17T14:51:00-04:00*
+*Last updated: 2026-07-18T19:44:00-04:00*

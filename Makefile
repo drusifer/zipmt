@@ -18,7 +18,7 @@ endif
 
 # ── Bob Protocol Targets ─────────────────────────────────────────────────────
 
-.PHONY: tldr test judge-tools-install judge-trace judge-trace-test test-rust format-rust rust-format-check rust-clippy rust-complexity rust-cyclomatic rust-dead-code rust-quality rust-audit rust-unsafe rust-miri rust-memcheck rust-profile rust-profile-report rust-profile-stream rust-callgrind rust-bloat rust-quality-full rust-tools-check rust-tools-install build-rust build-rust-debug via_index install_bob update_bob pull_bob clean_bob diff_bob
+.PHONY: tldr test judge-tools-install judge-trace judge-trace-test test-rust format-rust rust-format-check rust-clippy rust-complexity rust-cyclomatic rust-dead-code rust-quality rust-audit rust-unsafe rust-miri rust-memcheck rust-profile rust-profile-report rust-profile-stream rust-benchmark rust-callgrind rust-bloat rust-quality-full rust-tools-check rust-tools-install build-rust build-rust-debug rust-pty-smoke via_index install_bob update_bob pull_bob clean_bob diff_bob
 
 tldr: ## Show TL;DR summaries from all project files (quick orientation for agents)
 	@rg --no-heading "TLDR:" --glob "*.md" -N | sed 's|^\./||' | sort
@@ -106,6 +106,20 @@ rust-profile-stream: ## Profile Stream mode from PROFILE_STDIN
 	@perf report --stdio --no-children --percent-limit 0.1 --sort comm,dso,symbol -i zipmt-rust/perf.data > build/perf-report-stream.txt
 	@echo "Stream profile written to build/flamegraph-stream.svg and build/perf-report-stream.txt"
 
+rust-benchmark: ## Benchmark the current revision and append to benchmarks/rust-history.yaml (RUNS optional)
+	@mkdir -p build
+	@runs="$(or $(RUNS),3)"; case "$$runs" in *[!0-9]*|"") echo "RUNS must be a positive integer"; exit 2;; esac; test "$$runs" -gt 0 || { echo "RUNS must be positive"; exit 2; }; \
+	input=build/rust-benchmark-input.bin; timings=build/rust-benchmark-current.txt; output=/tmp/zipmt-rust-benchmark.xz; \
+	test -f "$$input" || dd if=/dev/urandom of="$$input" bs=1M count=32 status=none; \
+	cd zipmt-rust && cargo build --release; cd ..; : > "$$timings"; \
+	i=1; while test "$$i" -le "$$runs"; do \
+	  start=$$(date +%s%N); zipmt-rust/target/release/zipmt-rust --no-tui -a xz -l 1 -j 2 -o "$$output" "$$input" || exit $$?; \
+	  end=$$(date +%s%N); awk "BEGIN { print ($$end - $$start) / 1000000000 }" >> "$$timings"; rm -f "$$output"; i=$$((i + 1)); \
+	done; \
+	mkdir -p benchmarks; history=benchmarks/rust-history.yaml; revision=$$(git rev-parse --short=12 HEAD); dirty=false; git diff --quiet && git diff --cached --quiet || dirty=true; timestamp=$$(date -u +%Y-%m-%dT%H:%M:%SZ); bytes=$$(wc -c < "$$input"); digest=$$(sha256sum "$$input" | awk '{print $$1}'); \
+	awk -v timestamp="$$timestamp" -v revision="$$revision" -v dirty="$$dirty" -v runs="$$runs" -v bytes="$$bytes" -v digest="$$digest" '{ total += $$1 } END { mean = total / NR; mib = bytes / 1048576; printf "  - timestamp_utc: %s\n    revision: %s\n    dirty: %s\n    runs: %d\n    input_bytes: %d\n    input_sha256: %s\n    algorithm: xz\n    level: 1\n    threads: 2\n    mean_seconds: %.6f\n    throughput_mib_s: %.3f\n", timestamp, revision, dirty, runs, bytes, digest, mean, mib / mean }' "$$timings" >> "$$history"; \
+	tail -n 11 "$$history"
+
 rust-callgrind: ## Generate build/callgrind.out without perf (set PROFILE_ARGS)
 	@command -v valgrind >/dev/null || { echo "missing valgrind; install it with the system package manager"; exit 2; }
 	@[ -n "$(PROFILE_ARGS)" ] || { echo 'usage: make rust-callgrind PROFILE_ARGS="--no-tui -a xz -l 1 -j 2 -o /tmp/out.xz /tmp/input"'; exit 2; }
@@ -136,6 +150,16 @@ build-rust: ## Build Rust release binary
 
 build-rust-debug: ## Build Rust debug binary for local PTY testing
 	@cd zipmt-rust && cargo build
+
+rust-pty-smoke: build-rust-debug ## Run a real-PTY TUI compression smoke test (PTY_COLS/PTY_ROWS optional)
+	@input=$$(mktemp /tmp/zipmt-pty-input.XXXXXX); \
+	output="$$input.xz"; \
+	transcript="$$input.log"; \
+	truncate -s 8388608 "$$input"; \
+	COLUMNS="$${PTY_COLS:-80}" LINES="$${PTY_ROWS:-22}" ZIPMT_FORCE_TUI=1 script -qefc "zipmt-rust/target/debug/zipmt-rust -T -a xz -l 1 -j 2 -o $$output $$input" "$$transcript"; \
+	xz -t "$$output"; \
+	rg -q "ZIPMT PIPELINE CONTROLLER" "$$transcript"; \
+	echo "PTY smoke passed: $$transcript"
 
 via_index: ## Build the via index required by the via MCP server
 	@via index "$(CURDIR)"
@@ -337,7 +361,7 @@ judge-trace-test: ## Run focused tests for the Judge trace parser
 	@./agents/tools/mkf.py $(V) $@
 
 test-rust: ## Run Rust unit tests
-	@./agents/tools/mkf.py $(V) $@
+	@./agents/tools/mkf.py $(V) $@ ARGS="$(ARGS)"
 
 format-rust: ## Format Rust sources
 	@./agents/tools/mkf.py $(V) $@
@@ -381,6 +405,9 @@ rust-profile-report: ## Export Split perf symbols to build/perf-report-split.txt
 rust-profile-stream: ## Profile Stream mode from PROFILE_STDIN
 	@./agents/tools/mkf.py $(V) $@
 
+rust-benchmark: ## Benchmark current revision and append its result
+	@./agents/tools/mkf.py $(V) $@ RUNS="$(RUNS)"
+
 rust-callgrind: ## Generate build/callgrind.out without perf (set PROFILE_ARGS)
 	@./agents/tools/mkf.py $(V) $@
 
@@ -401,6 +428,9 @@ build-rust: ## Build Rust release binary
 
 build-rust-debug: ## Build Rust debug binary for local PTY testing
 	@./agents/tools/mkf.py $(V) $@
+
+rust-pty-smoke: ## Run a real-PTY TUI compression smoke test (PTY_COLS/PTY_ROWS optional)
+	@./agents/tools/mkf.py $(V) $@ PTY_COLS="$(PTY_COLS)" PTY_ROWS="$(PTY_ROWS)"
 
 via_index: ## Build the via index required by the via MCP server
 	@./agents/tools/mkf.py $(V) $@

@@ -44,13 +44,11 @@ pub fn get_output_path_mutex() -> &'static Arc<Mutex<Option<PathBuf>>> {
 }
 
 pub fn cleanup_output_file() {
-    if let Some(mutex) = OUTPUT_FILE_PATH.get() {
-        if let Ok(guard) = mutex.lock() {
-            if let Some(ref path) = *guard {
-                if path.exists() {
-                    let _ = std::fs::remove_file(path);
-                }
-            }
-        }
+    if let Some(mutex) = OUTPUT_FILE_PATH.get()
+        && let Ok(guard) = mutex.lock()
+        && let Some(ref path) = *guard
+        && path.exists()
+    {
+        let _ = std::fs::remove_file(path);
     }
 }

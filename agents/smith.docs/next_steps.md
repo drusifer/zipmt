@@ -1,7 +1,7 @@
 # Next Steps
 
-- Re-score after Neo fixes active/latest discovery, Codex Skill derivation, and shell parsing.
-- Preserve full-session scope whenever the active rollout began before today.
+- Morpheus performs the Phase 1 progression review.
+- Phase 2 may begin; no Phase 1 UX blocker remains.
 
 ---
-*Last updated: 2026-07-18T18:34:00-04:00*
+*Last updated: 2026-07-20T10:35:00-04:00*

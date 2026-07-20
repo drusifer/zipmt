@@ -1,15 +1,9 @@
 use std::collections::VecDeque;
-use std::io::Write;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyCode};
-use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-};
-use ratatui::Terminal;
-use ratatui::backend::CrosstermBackend;
+use crossterm::event;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::Marker;
@@ -18,10 +12,44 @@ use ratatui::widgets::{
     Axis, Block, BorderType, Borders, Chart, Clear, Dataset, Gauge, GraphType, Paragraph,
 };
 
+#[path = "tui/platform.rs"]
+mod platform;
+#[path = "tui/reducer.rs"]
+mod reducer;
+#[path = "tui/render.rs"]
+mod render;
+#[path = "tui/runtime.rs"]
+mod runtime;
+
+pub use platform::query_initial_size;
+#[cfg(test)]
+use platform::{parse_process_cpu_ticks, parse_resident_memory};
+pub use render::draw_tui;
+pub use runtime::run_tui_on_main_thread;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum TuiMode {
+pub enum ModeState {
     Split,
     Stream,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BodyLayoutProfile {
+    left_percent: u16,
+    right_percent: u16,
+}
+
+fn body_layout_profile(mode: ModeState) -> BodyLayoutProfile {
+    match mode {
+        ModeState::Split => BodyLayoutProfile {
+            left_percent: 60,
+            right_percent: 40,
+        },
+        ModeState::Stream => BodyLayoutProfile {
+            left_percent: 58,
+            right_percent: 42,
+        },
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -125,7 +153,7 @@ fn composite_eta(aggregate: SplitAggregate, elapsed: Duration) -> Option<Duratio
 #[derive(Clone, Debug)]
 pub struct WorkerState {
     pub id: usize,
-    pub status: &'static str, // "IDLE", "BUSY", "HOLD"
+    pub stage: crate::pipeline::WorkerStage,
     pub current_chunk: Option<u64>,
     pub display_chunk: Option<u64>,
     pub bytes_processed: usize,
@@ -229,8 +257,8 @@ fn next_focus(current: FocusedWidget) -> FocusedWidget {
     }
 }
 
-fn next_focus_for_mode(mode: TuiMode, current: FocusedWidget) -> FocusedWidget {
-    if mode == TuiMode::Split {
+fn next_focus_for_mode(mode: ModeState, current: FocusedWidget) -> FocusedWidget {
+    if mode == ModeState::Split {
         match current {
             FocusedWidget::ThrottleDelaySlider => FocusedWidget::ChunkSizeSlider,
             FocusedWidget::ChunkSizeSlider => FocusedWidget::None,
@@ -277,16 +305,9 @@ fn split_page_size(rows: u16) -> usize {
     body_height.saturating_sub(4).max(2) as usize / 2
 }
 
-fn parse_process_cpu_ticks(stat: &str) -> Option<u64> {
-    let fields = stat.get(stat.rfind(')')? + 1..)?.split_whitespace();
-    let fields = fields.collect::<Vec<_>>();
-    Some(fields.get(11)?.parse::<u64>().ok()? + fields.get(12)?.parse::<u64>().ok()?)
-}
-
-fn parse_resident_memory(status: &str) -> Option<usize> {
-    let line = status.lines().find(|line| line.starts_with("VmRSS:"))?;
-    let kib = line.split_whitespace().nth(1)?.parse::<usize>().ok()?;
-    Some(kib.saturating_mul(1024))
+fn worker_page_size(rows: u16) -> usize {
+    let body_height = 11 + rows.saturating_sub(22) / 2;
+    body_height.saturating_sub(4).max(4) as usize / 4
 }
 
 fn format_knob_rows(
@@ -317,7 +338,7 @@ fn format_knob_rows(
 }
 
 pub struct TuiState {
-    pub mode: TuiMode,
+    pub mode: ModeState,
     pub start_time: Instant,
     pub is_complete: bool,
     pub final_elapsed: Option<Duration>,
@@ -349,6 +370,7 @@ pub struct TuiState {
     // Queue / Worker / Gaps tracking
     pub input_queue: Vec<u64>,
     pub workers: Vec<WorkerState>,
+    pub worker_offset: usize,
     pub output_buffer: Vec<u64>,
     pub next_expected_seq: u64,
     // Compression level
@@ -380,7 +402,7 @@ impl TuiState {
             });
         }
         TuiState {
-            mode: TuiMode::Split,
+            mode: ModeState::Split,
             start_time: Instant::now(),
             is_complete: false,
             final_elapsed: None,
@@ -406,6 +428,7 @@ impl TuiState {
             last_io_sample: Instant::now(),
             input_queue: Vec::new(),
             workers: Vec::new(),
+            worker_offset: 0,
             output_buffer: Vec::new(),
             next_expected_seq: 0,
             level,
@@ -430,7 +453,7 @@ impl TuiState {
         for id in 0..num_workers {
             workers.push(WorkerState {
                 id,
-                status: "IDLE",
+                stage: crate::pipeline::WorkerStage::Idle,
                 current_chunk: None,
                 display_chunk: None,
                 bytes_processed: 0,
@@ -443,7 +466,7 @@ impl TuiState {
             });
         }
         TuiState {
-            mode: TuiMode::Stream,
+            mode: ModeState::Stream,
             start_time: Instant::now(),
             is_complete: false,
             final_elapsed: None,
@@ -469,6 +492,7 @@ impl TuiState {
             last_io_sample: Instant::now(),
             input_queue: Vec::new(),
             workers,
+            worker_offset: 0,
             output_buffer: Vec::new(),
             next_expected_seq: 0,
             level,
@@ -513,7 +537,7 @@ impl TuiState {
             return;
         }
         let (input_total, output_total) = match self.mode {
-            TuiMode::Split => {
+            ModeState::Split => {
                 let aggregate = self.split_aggregate();
                 (
                     aggregate.input_processed,
@@ -522,7 +546,7 @@ impl TuiState {
                         .saturating_add(self.split_final_bytes_written),
                 )
             }
-            TuiMode::Stream => (self.bytes_read, self.bytes_written),
+            ModeState::Stream => (self.bytes_read, self.bytes_written),
         };
         let seconds = elapsed.as_secs_f64();
         let input_delta = input_total.saturating_sub(self.prev_total_in);
@@ -555,18 +579,14 @@ impl TuiState {
         if elapsed.is_zero() {
             return;
         }
-        let ticks = std::fs::read_to_string("/proc/self/stat")
-            .ok()
-            .and_then(|stat| parse_process_cpu_ticks(&stat));
-        if let Some(current_ticks) = ticks {
+        let metrics = platform::sample_process_metrics();
+        if let Some(current_ticks) = metrics.cpu_ticks {
             self.process_cpu_percent = self.previous_cpu_ticks.map(|previous| {
                 current_ticks.saturating_sub(previous) as f64 / elapsed.as_secs_f64()
             });
             self.previous_cpu_ticks = Some(current_ticks);
         }
-        self.process_memory_bytes = std::fs::read_to_string("/proc/self/status")
-            .ok()
-            .and_then(|status| parse_resident_memory(&status));
+        self.process_memory_bytes = metrics.resident_memory_bytes;
     }
 
     pub fn split_aggregate(&self) -> SplitAggregate {
@@ -596,255 +616,21 @@ impl TuiState {
     }
 
     pub fn apply_progress_event(&mut self, event: crate::pipeline::ProgressEvent) {
-        use crate::pipeline::ProgressEvent;
-
-        match event {
-            ProgressEvent::SplitProgress {
-                stripe_id,
-                stage,
-                bytes_processed,
-                bytes_written,
-                total_bytes,
-            } => {
-                if let Some(stripe) = self.stripes.get_mut(stripe_id) {
-                    let now = Instant::now();
-                    stripe.stage = stage;
-                    if stage == crate::pipeline::SplitStage::Running && stripe.started_at.is_none()
-                    {
-                        stripe.started_at = Some(now);
-                    }
-                    if stage == crate::pipeline::SplitStage::Done && stripe.completed_at.is_none() {
-                        stripe.completed_at = Some(now);
-                    }
-                    stripe.bytes_processed = bytes_processed.min(total_bytes);
-                    stripe.bytes_written = stripe.bytes_written.max(bytes_written);
-                    stripe.total_bytes = total_bytes;
-                }
-            }
-            ProgressEvent::SplitFinalWrite { bytes_written } => {
-                self.split_final_bytes_written = self.split_final_bytes_written.max(bytes_written);
-            }
-            ProgressEvent::StreamProgress {
-                bytes_read,
-                bytes_written,
-                queue_depth,
-            } => {
-                self.bytes_read = bytes_read;
-                self.bytes_written = bytes_written;
-                self.queue_depth = queue_depth;
-            }
-            ProgressEvent::WorkerStatus {
-                worker_id,
-                status,
-                current_chunk,
-            } => {
-                if let Some(worker) = self.workers.get_mut(worker_id) {
-                    worker.status = status;
-                    worker.current_chunk = current_chunk;
-                }
-            }
-            ProgressEvent::WorkerChunkProgress {
-                worker_id,
-                seq_num,
-                bytes_processed,
-                bytes_written,
-                total_bytes,
-                finalized,
-            } => {
-                if let Some(worker) = self.workers.get_mut(worker_id) {
-                    worker.display_chunk = Some(seq_num);
-                    worker.bytes_processed = bytes_processed.min(total_bytes);
-                    worker.total_bytes = total_bytes;
-                    worker.bytes_written = worker.bytes_written.max(bytes_written);
-                    if worker.started_at.is_none() {
-                        worker.started_at = Some(Instant::now());
-                    }
-                    if finalized {
-                        if worker.completed_at.is_none() {
-                            let now = Instant::now();
-                            worker.completed_at = Some(now);
-                            worker.record_final_metrics(now);
-                        }
-                    }
-                }
-            }
-            ProgressEvent::ChunkQueued { seq_num, .. } => {
-                if !self.input_queue.contains(&seq_num) {
-                    self.input_queue.push(seq_num);
-                }
-            }
-            ProgressEvent::ChunkAssigned { worker_id, seq_num } => {
-                self.input_queue.retain(|queued| *queued != seq_num);
-                if let Some(worker) = self.workers.get_mut(worker_id) {
-                    worker.status = "BUSY";
-                    worker.current_chunk = Some(seq_num);
-                    worker.display_chunk = Some(seq_num);
-                    worker.bytes_processed = 0;
-                    worker.total_bytes = 0;
-                    worker.bytes_written = 0;
-                    worker.started_at = Some(Instant::now());
-                    worker.completed_at = None;
-                }
-            }
-            ProgressEvent::ChunkPending { worker_id, seq_num } => {
-                if let Some(worker) = self.workers.get_mut(worker_id) {
-                    if worker.current_chunk == Some(seq_num) {
-                        worker.status = "IDLE";
-                        worker.current_chunk = None;
-                    }
-                }
-                if !self.output_buffer.contains(&seq_num) {
-                    self.output_buffer.push(seq_num);
-                    self.output_buffer.sort_unstable();
-                }
-            }
-            ProgressEvent::ChunkWritten { seq_num } => {
-                self.output_buffer.retain(|pending| *pending != seq_num);
-                self.next_expected_seq = self.next_expected_seq.max(seq_num + 1);
-            }
-            ProgressEvent::WorkerAvailability { worker_id, enabled } => {
-                if let Some(worker) = self.workers.get_mut(worker_id) {
-                    worker.status = if enabled { "IDLE" } else { "OFF" };
-                    if !enabled {
-                        worker.current_chunk = None;
-                    }
-                }
-            }
-            ProgressEvent::AvgCompressionTime(duration) => self.update_chunk_time(duration),
-            ProgressEvent::Error(_) => self.clear_transient_pipeline_state(),
-            ProgressEvent::Complete => {
-                let now = Instant::now();
-                let system_elapsed = now.duration_since(self.last_speed_update);
-                if !system_elapsed.is_zero() {
-                    self.sample_system_metrics(system_elapsed);
-                    self.last_speed_update = now;
-                }
-                self.sample_io_bucket(now);
-                self.is_complete = true;
-                self.final_elapsed = Some(self.start_time.elapsed());
-                self.clear_transient_pipeline_state();
-            }
-        }
-    }
-
-    fn clear_transient_pipeline_state(&mut self) {
-        self.input_queue.clear();
-        self.output_buffer.clear();
-        self.queue_depth = 0;
-        for worker in &mut self.workers {
-            worker.current_chunk = None;
-            if worker.status != "OFF" {
-                worker.status = "IDLE";
-            }
+        let now = Instant::now();
+        if let Some(elapsed) = reducer::reduce_progress_event(self, event, now) {
+            self.sample_system_metrics(elapsed);
+            self.last_speed_update = now;
         }
     }
 }
 
-struct TerminalGuard {
-    pub terminal: Terminal<CrosstermBackend<std::io::Stderr>>,
-}
-impl TerminalGuard {
-    pub fn new() -> Result<Self, std::io::Error> {
-        let _ = enable_raw_mode();
-        let mut stderr = std::io::stderr();
-        let _ = crossterm::queue!(
-            stderr,
-            EnterAlternateScreen,
-            crossterm::cursor::Hide,
-            crossterm::event::EnableMouseCapture
-        );
-        let _ = stderr.flush();
-        let backend = CrosstermBackend::new(stderr);
-        let terminal = Terminal::new(backend)?;
-        Ok(TerminalGuard { terminal })
-    }
-}
-impl Drop for TerminalGuard {
-    fn drop(&mut self) {
-        let _ = disable_raw_mode();
-        let mut stderr = std::io::stderr();
-        let _ = crossterm::queue!(
-            stderr,
-            crossterm::cursor::Show,
-            LeaveAlternateScreen,
-            crossterm::event::DisableMouseCapture
-        );
-        let _ = stderr.flush();
-    }
-}
-
-pub fn query_initial_size() -> (u16, u16) {
-    if let (Ok(cols_str), Ok(rows_str)) = (std::env::var("COLUMNS"), std::env::var("LINES")) {
-        if let (Ok(cols), Ok(rows)) = (cols_str.parse::<u16>(), rows_str.parse::<u16>()) {
-            return (cols, rows);
-        }
-    }
-
-    // Try stty size with redirected TTY or stderr/proc streams
-    for path in &["/dev/tty", "/dev/stderr", "/proc/self/fd/2"] {
-        if let Ok(file) = std::fs::File::open(path) {
-            if let Ok(output) = std::process::Command::new("stty")
-                .arg("size")
-                .stdin(file)
-                .output()
-            {
-                let out_str = String::from_utf8_lossy(&output.stdout);
-                let parts: Vec<&str> = out_str.split_whitespace().collect();
-                if parts.len() == 2 {
-                    if let (Ok(rows), Ok(cols)) = (parts[0].parse::<u16>(), parts[1].parse::<u16>())
-                    {
-                        if cols > 0 && rows > 0 {
-                            return (cols, rows);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Try tput cols and tput lines with redirected TTY or stderr/proc streams
-    for path in &["/dev/tty", "/dev/stderr", "/proc/self/fd/2"] {
-        if let Ok(file) = std::fs::File::open(path) {
-            if let Ok(file_clone) = file.try_clone() {
-                if let Ok(output_cols) = std::process::Command::new("tput")
-                    .arg("cols")
-                    .stdin(file)
-                    .output()
-                {
-                    if let Ok(output_lines) = std::process::Command::new("tput")
-                        .arg("lines")
-                        .stdin(file_clone)
-                        .output()
-                    {
-                        let cols_str = String::from_utf8_lossy(&output_cols.stdout)
-                            .trim()
-                            .to_string();
-                        let lines_str = String::from_utf8_lossy(&output_lines.stdout)
-                            .trim()
-                            .to_string();
-                        if let (Ok(cols), Ok(rows)) =
-                            (cols_str.parse::<u16>(), lines_str.parse::<u16>())
-                        {
-                            if cols > 0 && rows > 0 {
-                                return (cols, rows);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    crossterm::terminal::size().unwrap_or((80, 24))
-}
-
-pub fn run_tui_on_main_thread(
+fn run_tui_on_main_thread_impl(
     state: Arc<Mutex<TuiState>>,
     rx: std::sync::mpsc::Receiver<crate::pipeline::ProgressEvent>,
     controller: crate::pipeline::PipelineController,
     comp_handle: std::thread::JoinHandle<Result<(), crate::compressor::ZipError>>,
 ) -> Result<(), crate::compressor::ZipError> {
-    let mut guard = TerminalGuard::new().map_err(crate::compressor::ZipError::Io)?;
+    let mut guard = runtime::TerminalGuard::new().map_err(crate::compressor::ZipError::Io)?;
 
     // Get initial terminal size
     let (w, h) = query_initial_size();
@@ -868,290 +654,15 @@ pub fn run_tui_on_main_thread(
         if event::poll(tick_rate).unwrap_or(false) {
             // Drain all pending events to keep event handling responsive and avoid queue lag
             while event::poll(std::time::Duration::from_millis(0)).unwrap_or(false) {
-                match event::read().unwrap() {
-                    Event::Key(key) => match key.code {
-                        KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
-                            if state.lock().unwrap().is_complete {
-                                should_exit = true;
-                                continue;
-                            }
-                            controller.abort();
-                            crate::cleanup_output_file();
-                            drop(guard);
-                            std::process::exit(2);
-                        }
-                        KeyCode::Enter if state.lock().unwrap().is_complete => {
-                            should_exit = true;
-                        }
-                        KeyCode::Char('p') | KeyCode::Char('P') => {
-                            let current = controller.is_paused.load(Ordering::Relaxed);
-                            if current {
-                                controller.resume();
-                            } else {
-                                controller.pause();
-                            }
-                            let mut state_guard = state.lock().unwrap();
-                            state_guard.is_paused = !current;
-                        }
-                        KeyCode::Char('i') | KeyCode::Char('I') => {
-                            state.lock().unwrap().toggle_io_chart_mode();
-                        }
-                        KeyCode::Char('-') => {
-                            let current = controller.throttle_delay_ms.load(Ordering::Relaxed);
-                            let new_val = std::cmp::min(current + 50, 500);
-                            controller.update_throttle(new_val);
-                            let mut state_guard = state.lock().unwrap();
-                            state_guard.throttle_delay_ms = new_val;
-                        }
-                        KeyCode::Char('+') | KeyCode::Char('=') => {
-                            let current = controller.throttle_delay_ms.load(Ordering::Relaxed);
-                            let new_val = current.saturating_sub(50);
-                            controller.update_throttle(new_val);
-                            let mut state_guard = state.lock().unwrap();
-                            state_guard.throttle_delay_ms = new_val;
-                        }
-                        KeyCode::Char('[') => {
-                            if state.lock().unwrap().mode == TuiMode::Split {
-                                continue;
-                            }
-                            let current = controller.compression_level.load(Ordering::Relaxed);
-                            if current > 1 {
-                                controller.update_level(current - 1);
-                                let mut state_guard = state.lock().unwrap();
-                                state_guard.level = current - 1;
-                            }
-                        }
-                        KeyCode::Char(']') => {
-                            if state.lock().unwrap().mode == TuiMode::Split {
-                                continue;
-                            }
-                            let current = controller.compression_level.load(Ordering::Relaxed);
-                            if current < 9 {
-                                controller.update_level(current + 1);
-                                let mut state_guard = state.lock().unwrap();
-                                state_guard.level = current + 1;
-                            }
-                        }
-                        KeyCode::Tab => {
-                            let mut state_guard = state.lock().unwrap();
-                            state_guard.focused_widget =
-                                next_focus_for_mode(state_guard.mode, state_guard.focused_widget);
-                        }
-                        KeyCode::PageUp => {
-                            let mut state_guard = state.lock().unwrap();
-                            if state_guard.mode == TuiMode::Split {
-                                let page = split_page_size(state_guard.terminal_rows);
-                                state_guard.split_sector_offset =
-                                    state_guard.split_sector_offset.saturating_sub(page);
-                            }
-                        }
-                        KeyCode::PageDown => {
-                            let mut state_guard = state.lock().unwrap();
-                            if state_guard.mode == TuiMode::Split {
-                                let page = split_page_size(state_guard.terminal_rows);
-                                let max_offset = state_guard.stripes.len().saturating_sub(page);
-                                state_guard.split_sector_offset =
-                                    (state_guard.split_sector_offset + page).min(max_offset);
-                            }
-                        }
-                        KeyCode::Home => {
-                            crate::LOG_SCROLL_OFFSET.store(usize::MAX, Ordering::Relaxed);
-                        }
-                        KeyCode::End => {
-                            crate::LOG_SCROLL_OFFSET.store(0, Ordering::Relaxed);
-                        }
-                        KeyCode::Up => {
-                            let mut state_guard = state.lock().unwrap();
-                            match state_guard.focused_widget {
-                                FocusedWidget::CompressionLevelSlider => {
-                                    let current =
-                                        controller.compression_level.load(Ordering::Relaxed);
-                                    if current < 9 {
-                                        controller.update_level(current + 1);
-                                        state_guard.level = current + 1;
-                                    }
-                                }
-                                FocusedWidget::ThrottleDelaySlider => {
-                                    let current =
-                                        controller.throttle_delay_ms.load(Ordering::Relaxed);
-                                    let new_val = std::cmp::min(current + 50, 500);
-                                    controller.update_throttle(new_val);
-                                    state_guard.throttle_delay_ms = new_val;
-                                }
-                                FocusedWidget::ChunkSizeSlider => {
-                                    let current = controller.chunk_size.load(Ordering::Relaxed);
-                                    let new_val =
-                                        (current * 2).min(crate::pipeline::MAX_CHUNK_SIZE);
-                                    if controller.update_chunk_size(new_val) {
-                                        state_guard.chunk_size = new_val;
-                                    }
-                                }
-                                FocusedWidget::WorkerCountSlider => {
-                                    let current = controller.active_workers.load(Ordering::Relaxed);
-                                    let new_val = (current + 1).min(controller.max_workers);
-                                    if controller.update_active_workers(new_val) {
-                                        state_guard.active_workers = new_val;
-                                    }
-                                }
-                                FocusedWidget::None => {
-                                    let offset = crate::LOG_SCROLL_OFFSET.load(Ordering::Relaxed);
-                                    crate::LOG_SCROLL_OFFSET
-                                        .store(offset.saturating_add(1), Ordering::Relaxed);
-                                }
-                            }
-                        }
-                        KeyCode::Down => {
-                            let mut state_guard = state.lock().unwrap();
-                            match state_guard.focused_widget {
-                                FocusedWidget::CompressionLevelSlider => {
-                                    let current =
-                                        controller.compression_level.load(Ordering::Relaxed);
-                                    if current > 1 {
-                                        controller.update_level(current - 1);
-                                        state_guard.level = current - 1;
-                                    }
-                                }
-                                FocusedWidget::ThrottleDelaySlider => {
-                                    let current =
-                                        controller.throttle_delay_ms.load(Ordering::Relaxed);
-                                    let new_val = current.saturating_sub(50);
-                                    controller.update_throttle(new_val);
-                                    state_guard.throttle_delay_ms = new_val;
-                                }
-                                FocusedWidget::ChunkSizeSlider => {
-                                    let current = controller.chunk_size.load(Ordering::Relaxed);
-                                    let new_val =
-                                        (current / 2).max(crate::pipeline::MIN_CHUNK_SIZE);
-                                    if controller.update_chunk_size(new_val) {
-                                        state_guard.chunk_size = new_val;
-                                    }
-                                }
-                                FocusedWidget::WorkerCountSlider => {
-                                    let current = controller.active_workers.load(Ordering::Relaxed);
-                                    let new_val = current.saturating_sub(1).max(1);
-                                    if controller.update_active_workers(new_val) {
-                                        state_guard.active_workers = new_val;
-                                    }
-                                }
-                                FocusedWidget::None => {
-                                    let offset = crate::LOG_SCROLL_OFFSET.load(Ordering::Relaxed);
-                                    crate::LOG_SCROLL_OFFSET
-                                        .store(offset.saturating_sub(1), Ordering::Relaxed);
-                                }
-                            }
-                        }
-                        _ => {}
-                    },
-                    Event::Resize(w, h) => {
-                        let mut state_guard = state.lock().unwrap();
-                        state_guard.terminal_cols = w;
-                        state_guard.terminal_rows = h;
+                match runtime::handle_event(event::read().unwrap(), &state, &controller) {
+                    runtime::RuntimeAction::Continue => {}
+                    runtime::RuntimeAction::Exit => should_exit = true,
+                    runtime::RuntimeAction::Abort => {
+                        controller.abort();
+                        crate::cleanup_output_file();
+                        drop(guard);
+                        std::process::exit(2);
                     }
-                    Event::Mouse(mouse_event) => {
-                        use crossterm::event::MouseEventKind;
-                        let (w, h) = {
-                            let state_guard = state.lock().unwrap();
-                            (state_guard.terminal_cols, state_guard.terminal_rows)
-                        };
-                        let footer_height = footer_height_for_rows(h);
-                        let body_height = 11 + h.saturating_sub(22) / 2;
-                        let logs_top = 1 + body_height;
-                        let logs_bottom = h.saturating_sub(footer_height);
-                        if mouse_event.row >= logs_top && mouse_event.row < logs_bottom {
-                            let offset = crate::LOG_SCROLL_OFFSET.load(Ordering::Relaxed);
-                            match mouse_event.kind {
-                                MouseEventKind::ScrollUp => {
-                                    crate::LOG_SCROLL_OFFSET
-                                        .store(offset.saturating_add(3), Ordering::Relaxed);
-                                    continue;
-                                }
-                                MouseEventKind::ScrollDown => {
-                                    crate::LOG_SCROLL_OFFSET
-                                        .store(offset.saturating_sub(3), Ordering::Relaxed);
-                                    continue;
-                                }
-                                _ => {}
-                            }
-                        }
-                        if mouse_event.kind
-                            == MouseEventKind::Down(crossterm::event::MouseButton::Left)
-                            || matches!(
-                                mouse_event.kind,
-                                MouseEventKind::Drag(crossterm::event::MouseButton::Left)
-                            )
-                        {
-                            if w >= 80 && h >= 22 {
-                                let footer_height = footer_height_for_rows(h) as usize;
-                                let controls_left = (w as usize).saturating_sub(52);
-                                let footer_content_top =
-                                    (h as usize).saturating_sub(footer_height) + 1;
-                                let control_height = footer_height.saturating_sub(2);
-
-                                let col = mouse_event.column as usize;
-                                let row = mouse_event.row as usize;
-                                if row >= footer_content_top
-                                    && row < footer_content_top + control_height
-                                {
-                                    let mode = state.lock().unwrap().mode;
-                                    if mode == TuiMode::Stream
-                                        && col >= controls_left
-                                        && col <= controls_left + 12
-                                    {
-                                        // Clicked Level Slider
-                                        let fraction = slider_fraction(
-                                            row - footer_content_top,
-                                            control_height,
-                                        );
-                                        let level = (9.0 - fraction * 8.0).round() as u32;
-                                        controller.update_level(level);
-                                        let mut state_guard = state.lock().unwrap();
-                                        state_guard.level = level;
-                                        state_guard.focused_widget =
-                                            FocusedWidget::CompressionLevelSlider;
-                                    } else if col >= controls_left + 13 && col <= controls_left + 25
-                                    {
-                                        // Clicked Delay Slider
-                                        let fraction = slider_fraction(
-                                            row - footer_content_top,
-                                            control_height,
-                                        );
-                                        let delay = ((1.0 - fraction) * 500.0).round() as u64;
-                                        controller.update_throttle(delay);
-                                        let mut state_guard = state.lock().unwrap();
-                                        state_guard.throttle_delay_ms = delay;
-                                        state_guard.focused_widget =
-                                            FocusedWidget::ThrottleDelaySlider;
-                                    } else if col >= controls_left + 26 && col <= controls_left + 38
-                                    {
-                                        let mut state_guard = state.lock().unwrap();
-                                        let chunk_size = chunk_size_from_slider_row(
-                                            row - footer_content_top,
-                                            control_height,
-                                        );
-                                        controller.update_chunk_size(chunk_size);
-                                        state_guard.chunk_size = chunk_size;
-                                        state_guard.focused_widget = FocusedWidget::ChunkSizeSlider;
-                                    } else if mode == TuiMode::Stream
-                                        && col >= controls_left + 39
-                                        && col <= controls_left + 51
-                                    {
-                                        let max_workers = controller.max_workers;
-                                        let workers = workers_from_slider_row(
-                                            row - footer_content_top,
-                                            control_height,
-                                            max_workers,
-                                        );
-                                        controller.update_active_workers(workers);
-                                        let mut state_guard = state.lock().unwrap();
-                                        state_guard.active_workers = workers;
-                                        state_guard.focused_widget =
-                                            FocusedWidget::WorkerCountSlider;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
                 }
             }
         }
@@ -1191,8 +702,7 @@ pub fn run_tui_on_main_thread(
 
     match comp_handle.join() {
         Ok(res) => res,
-        Err(_) => Err(crate::compressor::ZipError::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
+        Err(_) => Err(crate::compressor::ZipError::Io(std::io::Error::other(
             "Compression thread panicked",
         ))),
     }
@@ -1224,7 +734,7 @@ fn render_history_chart(history: &[f64], height: usize, data_width: usize) -> Ve
     };
     let mid_label = "       │".to_string();
 
-    for r in 0..height {
+    for (r, chart_line) in chart_lines.iter_mut().enumerate().take(height) {
         let label = if r == 0 {
             &top_label
         } else if r == height - 1 {
@@ -1247,9 +757,7 @@ fn render_history_chart(history: &[f64], height: usize, data_width: usize) -> Ve
                 let threshold = (height - 1 - r) as f64;
 
                 let diff = val_height - threshold;
-                let ch = if diff >= 1.0 {
-                    '█'
-                } else if diff >= 0.875 {
+                let ch = if diff >= 0.875 {
                     '█'
                 } else if diff >= 0.75 {
                     '▇'
@@ -1272,7 +780,7 @@ fn render_history_chart(history: &[f64], height: usize, data_width: usize) -> Ve
             row_str.push_str(&" ".repeat(data_width));
         }
 
-        chart_lines[r] = row_str;
+        *chart_line = row_str;
     }
     chart_lines
 }
@@ -1423,7 +931,7 @@ fn format_chunk_slots(chunks: &[u64], visible: usize) -> String {
     parts.join(" ")
 }
 
-pub fn draw_tui<B: ratatui::backend::Backend>(
+fn draw_tui_impl<B: ratatui::backend::Backend>(
     terminal: &mut ratatui::Terminal<B>,
     state: &TuiState,
 ) -> Result<(), std::io::Error> {
@@ -1523,12 +1031,13 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
         f.render_widget(Paragraph::new(title_line), chunks[0]);
 
         // --- 2. Body Panels ---
+        let body_profile = body_layout_profile(state.mode);
         let body_chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints(match state.mode {
-                TuiMode::Split => [Constraint::Percentage(60), Constraint::Percentage(40)],
-                TuiMode::Stream => [Constraint::Percentage(58), Constraint::Percentage(42)],
-            })
+            .constraints([
+                Constraint::Percentage(body_profile.left_percent),
+                Constraint::Percentage(body_profile.right_percent),
+            ])
             .split(chunks[1]);
         let right_chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -1537,30 +1046,32 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
 
         // Left Panel Block
         let split_row_capacity = body_chunks[0].height.saturating_sub(4).max(2) as usize / 2;
-        let worker_row_capacity = body_chunks[0].height.saturating_sub(4).max(4) as usize / 4;
+        let worker_row_capacity = worker_page_size(rows);
         let split_start = state
             .split_sector_offset
             .min(state.stripes.len().saturating_sub(1));
         let split_end = (split_start + split_row_capacity).min(state.stripes.len());
+        let worker_start = state
+            .worker_offset
+            .min(state.workers.len().saturating_sub(1));
+        let worker_end = (worker_start + worker_row_capacity).min(state.workers.len());
         let left_title = match state.mode {
-            TuiMode::Split if state.stripes.is_empty() => " Sectors -- ".to_string(),
-            TuiMode::Split => format!(
-                " Composite + Slices S{:02}-S{:02} of {} (+{}) ",
+            ModeState::Split if state.stripes.is_empty() => " Slices -- [Pg↕] ".to_string(),
+            ModeState::Split => format!(
+                " Slices S{:02}-S{:02}/{} +{} [Pg↕] ",
                 split_start + 1,
                 split_end,
                 state.stripes.len(),
                 state.stripes.len().saturating_sub(split_end)
             ),
-            TuiMode::Stream if state.workers.is_empty() => " STREAM WORKERS -- ".to_string(),
-            TuiMode::Stream => {
-                let end = worker_row_capacity.min(state.workers.len());
-                format!(
-                    " STREAM WORKERS W01-W{:02} of {} (+{}) ",
-                    end,
-                    state.workers.len(),
-                    state.workers.len().saturating_sub(end)
-                )
-            }
+            ModeState::Stream if state.workers.is_empty() => " WORKERS -- [Pg↕] ".to_string(),
+            ModeState::Stream => format!(
+                " WORKERS W{:02}-W{:02}/{} +{} [Pg↕] ",
+                worker_start + 1,
+                worker_end,
+                state.workers.len(),
+                state.workers.len().saturating_sub(worker_end)
+            ),
         };
         let left_block = Block::default()
             .borders(Borders::ALL)
@@ -1575,7 +1086,7 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
 
         // Right Panel Block
         let right_title = match state.mode {
-            TuiMode::Split | TuiMode::Stream => format!(
+            ModeState::Split | ModeState::Stream => format!(
                 " I/O Flow [I] {} ",
                 match state.io_chart_mode {
                     IoChartMode::Rate => "RATE MA10s",
@@ -1596,712 +1107,716 @@ pub fn draw_tui<B: ratatui::backend::Backend>(
 
         // Render Left Panel Content
         match state.mode {
-            TuiMode::Split => {
-                use crate::pipeline::SplitStage;
+            ModeState::Split => {
+                let render_split_panel = || {
+                    use crate::pipeline::SplitStage;
 
-                let mut lines = Vec::new();
-                let aggregate = state.split_aggregate();
-                let ratio = aggregate
-                    .ratio()
-                    .map(|value| format!("{value:.2}x"))
-                    .unwrap_or_else(|| "--".to_string());
-                let timing = if state.is_complete {
-                    format!("TIME {elapsed:.1}s")
-                } else {
-                    let eta = composite_eta(aggregate, Duration::from_secs_f64(elapsed))
-                        .map(|duration| format!("{:.0}s", duration.as_secs_f64()))
+                    let mut lines = Vec::new();
+                    let aggregate = state.split_aggregate();
+                    let ratio = aggregate
+                        .ratio()
+                        .map(|value| format!("{value:.2}x"))
                         .unwrap_or_else(|| "--".to_string());
-                    format!("ETA {eta}")
-                };
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        format!(
-                            "TOTAL {:3.0}% {}/{} ",
-                            aggregate.percent(),
-                            aggregate.completed_sectors,
-                            state.stripes.len()
-                        ),
-                        style_yellow,
-                    ),
-                    Span::styled(format!("RATIO {ratio} {timing}"), style_cyan),
-                ]));
-                let output_io_total = aggregate
-                    .output_produced
-                    .saturating_add(state.split_final_bytes_written);
-                let output_rate = if elapsed > 0.0 {
-                    output_io_total as f64 / elapsed
-                } else {
-                    0.0
-                };
-                lines.push(Line::from(Span::styled(
-                    if state.is_complete {
-                        format!(
-                            "IN {} OUT {} IO {} AVG {}→{}",
-                            format_bytes(aggregate.input_processed as f64, false),
-                            format_bytes(aggregate.output_produced as f64, false),
-                            format_bytes(output_io_total as f64, false),
-                            format_bytes(
-                                aggregate.input_processed as f64 / elapsed.max(f64::EPSILON),
-                                true
-                            ),
-                            format_bytes(output_rate, true)
-                        )
+                    let timing = if state.is_complete {
+                        format!("TIME {elapsed:.1}s")
                     } else {
-                        format!(
-                            "IN {} / {}  OUT {}  ACTIVE {}",
-                            format_bytes(aggregate.input_processed as f64, false),
-                            format_bytes(aggregate.input_total as f64, false),
-                            format_bytes(aggregate.output_produced as f64, false),
-                            aggregate.active_sectors
-                        )
-                    },
-                    style_purple,
-                )));
-                for stripe in state
-                    .stripes
-                    .iter()
-                    .skip(split_start)
-                    .take(split_row_capacity)
-                {
-                    let now = Instant::now();
-                    let (average_input, average_output) = stripe.average_rates(now);
-                    let total = stripe.total_bytes;
-                    let processed = stripe.bytes_processed.min(total);
-                    let pct = if total > 0 {
-                        (processed * 100) / total
-                    } else {
-                        0
+                        let eta = composite_eta(aggregate, Duration::from_secs_f64(elapsed))
+                            .map(|duration| format!("{:.0}s", duration.as_secs_f64()))
+                            .unwrap_or_else(|| "--".to_string());
+                        format!("ETA {eta}")
                     };
-
-                    let stage = match stripe.stage {
-                        SplitStage::Waiting => "WAIT",
-                        SplitStage::Running => "RUN ",
-                        SplitStage::Done => "DONE",
-                    };
-
-                    let ratio = if stripe.stage == SplitStage::Done && stripe.bytes_written > 0 {
-                        format!("{:.1}x", total as f64 / stripe.bytes_written as f64)
-                    } else {
-                        "--".to_string()
-                    };
-
-                    let bar_len = body_chunks[0].width.saturating_sub(30).max(3) as usize;
-                    let filled = if total > 0 {
-                        std::cmp::min((processed * bar_len) / total, bar_len)
-                    } else {
-                        0
-                    };
-                    let bar: String = std::iter::repeat('█')
-                        .take(filled)
-                        .chain(std::iter::repeat('░').take(bar_len - filled))
-                        .collect();
-
                     lines.push(Line::from(vec![
-                        Span::styled(format!("S{:02} {stage} ", stripe.id + 1), style_purple),
-                        Span::styled(format!("[{}] ", bar), style_cyan),
-                        Span::styled(format!("{:3}% ", pct), style_yellow),
                         Span::styled(
                             format!(
-                                "{} / {}",
-                                format_bytes(processed as f64, false),
-                                format_bytes(total as f64, false)
+                                "TOTAL {:3.0}% {}/{} ",
+                                aggregate.percent(),
+                                aggregate.completed_sectors,
+                                state.stripes.len()
                             ),
-                            style_cyan,
+                            style_yellow,
                         ),
+                        Span::styled(format!("RATIO {ratio} {timing}"), style_cyan),
                     ]));
-                    lines.push(Line::from(vec![
-                        Span::styled("    AVG ", style_purple),
-                        Span::styled(
-                            format!(
-                                "{}→{}  OUT {}  R {ratio}",
-                                format_bytes(average_input, true),
-                                format_bytes(average_output, true),
-                                format_bytes(stripe.bytes_written as f64, false),
-                            ),
-                            style_cyan,
-                        ),
-                    ]));
-                }
-                while lines.len() < 10 {
-                    lines.push(Line::from(""));
-                }
-                f.render_widget(Paragraph::new(lines).block(left_block), body_chunks[0]);
-            }
-            TuiMode::Stream => {
-                let speed_in = if elapsed > 0.0 {
-                    state.bytes_read as f64 / elapsed
-                } else {
-                    0.0
-                };
-
-                let ratio = if state.bytes_written > 0 {
-                    state.bytes_read as f64 / state.bytes_written as f64
-                } else {
-                    1.0
-                };
-                let speed_out = if elapsed > 0.0 {
-                    state.bytes_written as f64 / elapsed
-                } else {
-                    0.0
-                };
-
-                f.render_widget(left_block.clone(), body_chunks[0]);
-                let inner = left_block.inner(body_chunks[0]);
-                let stream_chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Length(1),
-                        Constraint::Min(4),
-                        Constraint::Length(1),
-                    ])
-                    .split(inner);
-
-                let header_line = if state.is_complete {
-                    Line::from(Span::styled(
-                        format!(
-                            "DONE {elapsed:.1}s I{} O{} R{ratio:.2}x",
-                            format_rate_fixed(speed_in),
-                            format_rate_fixed(speed_out)
-                        ),
-                        style_yellow,
-                    ))
-                } else {
-                    Line::from(vec![
-                        Span::styled("IN ", style_purple),
-                        Span::styled(
-                            format!("{:.2}M ", state.bytes_read as f64 / (1024.0 * 1024.0)),
-                            style_cyan,
-                        ),
-                        Span::styled(format_bytes(speed_in, true), style_cyan),
-                        Span::styled("  OUT ", style_purple),
-                        Span::styled(
-                            format!("{:.2}M ", state.bytes_written as f64 / (1024.0 * 1024.0)),
-                            style_cyan,
-                        ),
-                        Span::styled(format_bytes(speed_out, true), style_cyan),
-                        Span::styled("  R ", style_purple),
-                        Span::styled(format!("{ratio:.2}x"), style_yellow),
-                    ])
-                };
-                f.render_widget(Paragraph::new(header_line), stream_chunks[0]);
-
-                let now = Instant::now();
-                let worker_areas = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints(
-                        state
-                            .workers
-                            .iter()
-                            .take(worker_row_capacity)
-                            .map(|_| Constraint::Length(4))
-                            .collect::<Vec<_>>(),
-                    )
-                    .split(stream_chunks[1]);
-                for (worker, area) in state
-                    .workers
-                    .iter()
-                    .take(worker_row_capacity)
-                    .zip(worker_areas.iter().copied())
-                {
-                    let progress = if worker.total_bytes > 0 {
-                        worker.bytes_processed as f64 / worker.total_bytes as f64
+                    let output_io_total = aggregate
+                        .output_produced
+                        .saturating_add(state.split_final_bytes_written);
+                    let output_rate = if elapsed > 0.0 {
+                        output_io_total as f64 / elapsed
                     } else {
                         0.0
                     };
-                    let ratio = format_worker_ratio(worker.average_ratio());
-                    let eta = worker
-                        .eta(now)
-                        .map(|duration| format!("{:.2}s", duration.as_secs_f64()))
-                        .unwrap_or_else(|| "--.--s".to_string());
-                    let status = if worker.completed_at.is_some() && worker.current_chunk.is_none()
-                    {
-                        "DONE"
-                    } else {
-                        worker.status
-                    };
-                    let chunk = worker
-                        .display_chunk
-                        .or(worker.current_chunk)
-                        .map(|chunk| format!("C{:03}", chunk + 1))
-                        .unwrap_or_else(|| "C---".to_string());
-                    let card = Block::default()
-                        .borders(Borders::ALL)
-                        .border_type(BorderType::Rounded)
-                        .border_style(style_purple)
-                        .title(Span::styled(
-                            format!(" W{:02} {status:<4} {chunk} ", worker.id + 1),
-                            style_yellow,
-                        ));
-                    let card_inner = card.inner(area);
-                    f.render_widget(card, area);
-                    let card_rows = Layout::default()
-                        .direction(Direction::Vertical)
-                        .constraints([Constraint::Length(1), Constraint::Length(1)])
-                        .split(card_inner);
-                    f.render_widget(
-                        Gauge::default()
-                            .gauge_style(
-                                Style::default()
-                                    .fg(Color::Cyan)
-                                    .bg(Color::Black)
-                                    .add_modifier(Modifier::BOLD),
+                    lines.push(Line::from(Span::styled(
+                        if state.is_complete {
+                            format!(
+                                "IN {} OUT {} IO {} AVG {}→{}",
+                                format_bytes(aggregate.input_processed as f64, false),
+                                format_bytes(aggregate.output_produced as f64, false),
+                                format_bytes(output_io_total as f64, false),
+                                format_bytes(
+                                    aggregate.input_processed as f64 / elapsed.max(f64::EPSILON),
+                                    true
+                                ),
+                                format_bytes(output_rate, true)
                             )
-                            .ratio(progress.clamp(0.0, 1.0))
-                            .label(format!("{:6.2}%", progress * 100.0)),
-                        card_rows[0],
-                    );
-                    f.render_widget(
-                        Paragraph::new(Line::from(vec![
-                            Span::styled("AVG ", style_purple),
+                        } else {
+                            format!(
+                                "IN {} / {}  OUT {}  ACTIVE {}",
+                                format_bytes(aggregate.input_processed as f64, false),
+                                format_bytes(aggregate.input_total as f64, false),
+                                format_bytes(aggregate.output_produced as f64, false),
+                                aggregate.active_sectors
+                            )
+                        },
+                        style_purple,
+                    )));
+                    for stripe in state
+                        .stripes
+                        .iter()
+                        .skip(split_start)
+                        .take(split_row_capacity)
+                    {
+                        let now = Instant::now();
+                        let (average_input, average_output) = stripe.average_rates(now);
+                        let total = stripe.total_bytes;
+                        let processed = stripe.bytes_processed.min(total);
+                        let pct = (processed * 100).checked_div(total).unwrap_or(0);
+
+                        let stage = match stripe.stage {
+                            SplitStage::Waiting => "WAIT",
+                            SplitStage::Running => "RUN ",
+                            SplitStage::Done => "DONE",
+                        };
+
+                        let ratio = if stripe.stage == SplitStage::Done && stripe.bytes_written > 0
+                        {
+                            format!("{:.1}x", total as f64 / stripe.bytes_written as f64)
+                        } else {
+                            "--".to_string()
+                        };
+
+                        let bar_len = body_chunks[0].width.saturating_sub(30).max(3) as usize;
+                        let filled = (processed * bar_len)
+                            .checked_div(total)
+                            .unwrap_or(0)
+                            .min(bar_len);
+                        let bar: String = std::iter::repeat_n('█', filled)
+                            .chain(std::iter::repeat_n('░', bar_len - filled))
+                            .collect();
+
+                        lines.push(Line::from(vec![
+                            Span::styled(format!("S{:02} {stage} ", stripe.id + 1), style_purple),
+                            Span::styled(format!("[{}] ", bar), style_cyan),
+                            Span::styled(format!("{:3}% ", pct), style_yellow),
                             Span::styled(
-                                format_rate_fixed(worker.average_input_rate(now)),
+                                format!(
+                                    "{} / {}",
+                                    format_bytes(processed as f64, false),
+                                    format_bytes(total as f64, false)
+                                ),
                                 style_cyan,
                             ),
-                            Span::styled("  R ", style_purple),
-                            Span::styled(format!("{ratio}x"), style_cyan),
-                            Span::styled("  ETA ", style_purple),
-                            Span::styled(format!("{eta:>7}"), style_cyan),
-                        ])),
-                        card_rows[1],
-                    );
-                }
+                        ]));
+                        lines.push(Line::from(vec![
+                            Span::styled("    AVG ", style_purple),
+                            Span::styled(
+                                format!(
+                                    "{}→{}  OUT {}  R {ratio}",
+                                    format_bytes(average_input, true),
+                                    format_bytes(average_output, true),
+                                    format_bytes(stripe.bytes_written as f64, false),
+                                ),
+                                style_cyan,
+                            ),
+                        ]));
+                    }
+                    while lines.len() < 10 {
+                        lines.push(Line::from(""));
+                    }
+                    f.render_widget(Paragraph::new(lines).block(left_block), body_chunks[0]);
+                };
+                render_split_panel();
+            }
+            ModeState::Stream => {
+                let mut render_stream_panel = || {
+                    let speed_in = if elapsed > 0.0 {
+                        state.bytes_read as f64 / elapsed
+                    } else {
+                        0.0
+                    };
 
-                let out_queue_list = format_chunk_slots(&state.output_buffer, 8);
-                let queue_list = format_chunk_slots(&state.input_queue, 4);
-                f.render_widget(
-                    Paragraph::new(Line::from(vec![
-                        Span::styled("Q ", style_purple),
-                        Span::styled(queue_list, style_cyan),
-                        Span::styled(
-                            format!(" ({}/{})", state.queue_depth, state.queue_capacity),
+                    let ratio = if state.bytes_written > 0 {
+                        state.bytes_read as f64 / state.bytes_written as f64
+                    } else {
+                        1.0
+                    };
+                    let speed_out = if elapsed > 0.0 {
+                        state.bytes_written as f64 / elapsed
+                    } else {
+                        0.0
+                    };
+
+                    f.render_widget(left_block.clone(), body_chunks[0]);
+                    let inner = left_block.inner(body_chunks[0]);
+                    let stream_chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Length(1),
+                            Constraint::Min(4),
+                            Constraint::Length(1),
+                        ])
+                        .split(inner);
+
+                    let header_line = if state.is_complete {
+                        Line::from(Span::styled(
+                            format!(
+                                "DONE {elapsed:.1}s I{} O{} R{ratio:.2}x",
+                                format_rate_fixed(speed_in),
+                                format_rate_fixed(speed_out)
+                            ),
                             style_yellow,
-                        ),
-                        Span::styled("  PEND ", style_purple),
-                        Span::styled(out_queue_list, style_cyan),
-                        Span::styled(
-                            format!("  N #{}", state.next_expected_seq + 1),
-                            style_yellow,
-                        ),
-                    ])),
-                    stream_chunks[2],
-                );
+                        ))
+                    } else {
+                        Line::from(vec![
+                            Span::styled("IN ", style_purple),
+                            Span::styled(
+                                format!("{:.2}M ", state.bytes_read as f64 / (1024.0 * 1024.0)),
+                                style_cyan,
+                            ),
+                            Span::styled(format_bytes(speed_in, true), style_cyan),
+                            Span::styled("  OUT ", style_purple),
+                            Span::styled(
+                                format!("{:.2}M ", state.bytes_written as f64 / (1024.0 * 1024.0)),
+                                style_cyan,
+                            ),
+                            Span::styled(format_bytes(speed_out, true), style_cyan),
+                            Span::styled("  R ", style_purple),
+                            Span::styled(format!("{ratio:.2}x"), style_yellow),
+                        ])
+                    };
+                    f.render_widget(Paragraph::new(header_line), stream_chunks[0]);
+
+                    let now = Instant::now();
+                    let worker_areas = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints(
+                            state
+                                .workers
+                                .iter()
+                                .skip(worker_start)
+                                .take(worker_row_capacity)
+                                .map(|_| Constraint::Length(4))
+                                .collect::<Vec<_>>(),
+                        )
+                        .split(stream_chunks[1]);
+                    for (worker, area) in state
+                        .workers
+                        .iter()
+                        .skip(worker_start)
+                        .take(worker_row_capacity)
+                        .zip(worker_areas.iter().copied())
+                    {
+                        let progress = if worker.total_bytes > 0 {
+                            worker.bytes_processed as f64 / worker.total_bytes as f64
+                        } else {
+                            0.0
+                        };
+                        let ratio = format_worker_ratio(worker.average_ratio());
+                        let eta = worker
+                            .eta(now)
+                            .map(|duration| format!("{:.2}s", duration.as_secs_f64()))
+                            .unwrap_or_else(|| "--.--s".to_string());
+                        let status =
+                            if worker.completed_at.is_some() && worker.current_chunk.is_none() {
+                                "DONE"
+                            } else {
+                                worker.stage.label()
+                            };
+                        let chunk = worker
+                            .display_chunk
+                            .or(worker.current_chunk)
+                            .map(|chunk| format!("C{:03}", chunk + 1))
+                            .unwrap_or_else(|| "C---".to_string());
+                        let card = Block::default()
+                            .borders(Borders::ALL)
+                            .border_type(BorderType::Rounded)
+                            .border_style(style_purple)
+                            .title(Span::styled(
+                                format!(" W{:02} {status:<4} {chunk} ", worker.id + 1),
+                                style_yellow,
+                            ));
+                        let card_inner = card.inner(area);
+                        f.render_widget(card, area);
+                        let card_rows = Layout::default()
+                            .direction(Direction::Vertical)
+                            .constraints([Constraint::Length(1), Constraint::Length(1)])
+                            .split(card_inner);
+                        f.render_widget(
+                            Gauge::default()
+                                .gauge_style(
+                                    Style::default()
+                                        .fg(Color::Cyan)
+                                        .bg(Color::Black)
+                                        .add_modifier(Modifier::BOLD),
+                                )
+                                .ratio(progress.clamp(0.0, 1.0))
+                                .label(format!("{:6.2}%", progress * 100.0)),
+                            card_rows[0],
+                        );
+                        f.render_widget(
+                            Paragraph::new(Line::from(vec![
+                                Span::styled("AVG ", style_purple),
+                                Span::styled(
+                                    format_rate_fixed(worker.average_input_rate(now)),
+                                    style_cyan,
+                                ),
+                                Span::styled("  R ", style_purple),
+                                Span::styled(format!("{ratio}x"), style_cyan),
+                                Span::styled("  ETA ", style_purple),
+                                Span::styled(format!("{eta:>7}"), style_cyan),
+                            ])),
+                            card_rows[1],
+                        );
+                    }
+
+                    let out_queue_list = format_chunk_slots(&state.output_buffer, 8);
+                    let queue_list = format_chunk_slots(&state.input_queue, 4);
+                    f.render_widget(
+                        Paragraph::new(Line::from(vec![
+                            Span::styled("Q ", style_purple),
+                            Span::styled(queue_list, style_cyan),
+                            Span::styled(
+                                format!(" ({}/{})", state.queue_depth, state.queue_capacity),
+                                style_yellow,
+                            ),
+                            Span::styled("  PEND ", style_purple),
+                            Span::styled(out_queue_list, style_cyan),
+                            Span::styled(
+                                format!("  N #{}", state.next_expected_seq + 1),
+                                style_yellow,
+                            ),
+                        ])),
+                        stream_chunks[2],
+                    );
+                };
+                render_stream_panel();
             }
         }
 
         // Render Right Panel Content (native multi-series chart)
-        let chart_data = prepare_io_chart(
-            &state.io_history,
-            state.io_chart_mode,
-            right_chunks[0].width.saturating_sub(10) as usize,
-        );
-        let guide_style = Style::default().fg(Color::Indexed(238));
-        let divider_style = Style::default().fg(Color::Indexed(240));
-        let raw_input_style = Style::default().fg(Color::Cyan);
-        let raw_output_style = Style::default().fg(Color::Yellow);
-        let average_style = Style::default().fg(Color::Indexed(213));
-        let mut datasets = vec![
-            Dataset::default()
-                .marker(Marker::Dot)
-                .graph_type(GraphType::Scatter)
-                .style(guide_style)
-                .data(&chart_data.guides[0]),
-            Dataset::default()
-                .marker(Marker::Braille)
-                .graph_type(GraphType::Line)
-                .style(divider_style)
-                .data(&chart_data.guides[1]),
-            Dataset::default()
-                .marker(Marker::Dot)
-                .graph_type(GraphType::Scatter)
-                .style(guide_style)
-                .data(&chart_data.guides[2]),
-            Dataset::default()
-                .marker(Marker::Braille)
-                .graph_type(GraphType::Line)
-                .style(raw_input_style)
-                .data(&chart_data.input),
-            Dataset::default()
-                .marker(Marker::Braille)
-                .graph_type(GraphType::Line)
-                .style(raw_output_style)
-                .data(&chart_data.output),
-        ];
-        if state.io_chart_mode == IoChartMode::Rate {
-            datasets.extend([
+        let render_io_panel = || {
+            let chart_data = prepare_io_chart(
+                &state.io_history,
+                state.io_chart_mode,
+                right_chunks[0].width.saturating_sub(10) as usize,
+            );
+            let guide_style = Style::default().fg(Color::Indexed(238));
+            let divider_style = Style::default().fg(Color::Indexed(240));
+            let raw_input_style = Style::default().fg(Color::Cyan);
+            let raw_output_style = Style::default().fg(Color::Yellow);
+            let average_style = Style::default().fg(Color::Indexed(213));
+            let mut datasets = vec![
+                Dataset::default()
+                    .marker(Marker::Dot)
+                    .graph_type(GraphType::Scatter)
+                    .style(guide_style)
+                    .data(&chart_data.guides[0]),
                 Dataset::default()
                     .marker(Marker::Braille)
                     .graph_type(GraphType::Line)
-                    .style(average_style)
-                    .data(&chart_data.input_average),
+                    .style(divider_style)
+                    .data(&chart_data.guides[1]),
+                Dataset::default()
+                    .marker(Marker::Dot)
+                    .graph_type(GraphType::Scatter)
+                    .style(guide_style)
+                    .data(&chart_data.guides[2]),
                 Dataset::default()
                     .marker(Marker::Braille)
                     .graph_type(GraphType::Line)
-                    .style(average_style)
-                    .data(&chart_data.output_average),
-            ]);
-        }
-        let per_second = state.io_chart_mode == IoChartMode::Rate;
-        let chart = Chart::new(datasets)
-            .block(right_block)
-            .x_axis(Axis::default().bounds([0.0, chart_data.x_max]))
-            .y_axis(
-                Axis::default()
-                    .style(style_purple)
-                    .bounds([-chart_data.scale, chart_data.scale])
-                    .labels(vec![
-                        Span::styled(
-                            format!("OUT {}", format_bytes(chart_data.latest.1, per_second)),
-                            style_yellow,
-                        ),
-                        Span::styled("0", style_purple),
-                        Span::styled(
-                            format!("IN {}", format_bytes(chart_data.latest.0, per_second)),
-                            style_cyan,
-                        ),
-                    ]),
-            )
-            .legend_position(None);
-        f.render_widget(chart, right_chunks[0]);
+                    .style(raw_input_style)
+                    .data(&chart_data.input),
+                Dataset::default()
+                    .marker(Marker::Braille)
+                    .graph_type(GraphType::Line)
+                    .style(raw_output_style)
+                    .data(&chart_data.output),
+            ];
+            if state.io_chart_mode == IoChartMode::Rate {
+                datasets.extend([
+                    Dataset::default()
+                        .marker(Marker::Braille)
+                        .graph_type(GraphType::Line)
+                        .style(average_style)
+                        .data(&chart_data.input_average),
+                    Dataset::default()
+                        .marker(Marker::Braille)
+                        .graph_type(GraphType::Line)
+                        .style(average_style)
+                        .data(&chart_data.output_average),
+                ]);
+            }
+            let per_second = state.io_chart_mode == IoChartMode::Rate;
+            let chart = Chart::new(datasets)
+                .block(right_block)
+                .x_axis(Axis::default().bounds([0.0, chart_data.x_max]))
+                .y_axis(
+                    Axis::default()
+                        .style(style_purple)
+                        .bounds([-chart_data.scale, chart_data.scale])
+                        .labels(vec![
+                            Span::styled(
+                                format!("OUT {}", format_bytes(chart_data.latest.1, per_second)),
+                                style_yellow,
+                            ),
+                            Span::styled("0", style_purple),
+                            Span::styled(
+                                format!("IN {}", format_bytes(chart_data.latest.0, per_second)),
+                                style_cyan,
+                            ),
+                        ]),
+                )
+                .legend_position(None);
+            f.render_widget(chart, right_chunks[0]);
 
-        let system_block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(style_orange)
-            .title(Span::styled(" Process ", style_yellow));
-        let cpu = state
-            .process_cpu_percent
-            .map(|value| format!("{value:.1}%"))
-            .unwrap_or_else(|| "--".to_string());
-        let memory = state
-            .process_memory_bytes
-            .map(|value| format_bytes(value as f64, false))
-            .unwrap_or_else(|| "--".to_string());
-        f.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled("CPU ", style_purple),
-                Span::styled(cpu, style_cyan),
-                Span::styled("  RSS ", style_purple),
-                Span::styled(memory, style_cyan),
-            ]))
-            .block(system_block),
-            right_chunks[1],
-        );
+            let system_block = Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(style_orange)
+                .title(Span::styled(" Process ", style_yellow));
+            let cpu = state
+                .process_cpu_percent
+                .map(|value| format!("{value:.1}%"))
+                .unwrap_or_else(|| "--".to_string());
+            let memory = state
+                .process_memory_bytes
+                .map(|value| format_bytes(value as f64, false))
+                .unwrap_or_else(|| "--".to_string());
+            f.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled("CPU ", style_purple),
+                    Span::styled(cpu, style_cyan),
+                    Span::styled("  RSS ", style_purple),
+                    Span::styled(memory, style_cyan),
+                ]))
+                .block(system_block),
+                right_chunks[1],
+            );
+        };
+        render_io_panel();
 
         // --- 3. Logs Section ---
-        let pool_size = if state.mode == TuiMode::Split {
-            state.stripes.len()
-        } else {
-            state.workers.len()
-        };
-        let chunk_size_str = match state.mode {
-            TuiMode::Split => {
-                let size = if !state.stripes.is_empty() && state.stripes[0].total_bytes > 0 {
-                    state.stripes[0].total_bytes
-                } else if !state.stripes.is_empty() {
-                    state.total_input_size / state.stripes.len()
-                } else {
-                    0
-                };
-                format!("{:.1}MB", size as f64 / (1024.0 * 1024.0))
-            }
-            TuiMode::Stream => format!("{:.1}MB", state.chunk_size as f64 / (1024.0 * 1024.0)),
-        };
-        let qcap = state.queue_capacity;
-        let avg_time = state.get_avg_chunk_time_ms();
-        let avg_str = if avg_time > 0.0 {
-            format!("(avg:{:.1}ms)", avg_time)
-        } else {
-            "(avg:--)".to_string()
-        };
-
-        let logs_title = format!(
-            " Log Messages (▲/▼, wheel, Home/End) ── Knobs: P:{}/{} C:{} Q:{} L:{} {} ",
-            state.active_workers.min(pool_size),
-            state.max_workers.max(pool_size),
-            chunk_size_str.replace("MB", "M"),
-            qcap,
-            state.level,
-            avg_str
-        );
-        let logs_block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(style_orange)
-            .title(Span::styled(
-                logs_title,
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ));
-
-        let logs = if let Ok(buffer) = crate::get_log_buffer().lock() {
-            buffer.clone()
-        } else {
-            Vec::new()
-        };
-
-        let lines_back = crate::LOG_SCROLL_OFFSET.load(Ordering::Relaxed);
-        let logs_inner_height = chunks[2].height.saturating_sub(2) as usize;
-        let max_offset = logs.len().saturating_sub(logs_inner_height);
-        let lines_back = lines_back.min(max_offset);
-        let offset = log_window_start(logs.len(), logs_inner_height, lines_back);
-        crate::LOG_SCROLL_OFFSET.store(lines_back, Ordering::Relaxed);
-
-        let mut log_lines = Vec::new();
-        for r in 0..logs_inner_height {
-            if offset + r < logs.len() {
-                let line_str = &logs[offset + r];
-                let max_log_width = chunks[2].width.saturating_sub(4) as usize;
-                let truncated = if line_str.len() > max_log_width {
-                    format!("{}...", &line_str[..max_log_width.saturating_sub(3)])
-                } else {
-                    line_str.clone()
-                };
-                log_lines.push(Line::from(Span::styled(truncated, style_cyan)));
+        let mut render_logs = || {
+            let pool_size = if state.mode == ModeState::Split {
+                state.stripes.len()
             } else {
-                log_lines.push(Line::from(""));
+                state.workers.len()
+            };
+            let chunk_size_str = match state.mode {
+                ModeState::Split => {
+                    let size = if !state.stripes.is_empty() && state.stripes[0].total_bytes > 0 {
+                        state.stripes[0].total_bytes
+                    } else if !state.stripes.is_empty() {
+                        state.total_input_size / state.stripes.len()
+                    } else {
+                        0
+                    };
+                    format!("{:.1}MB", size as f64 / (1024.0 * 1024.0))
+                }
+                ModeState::Stream => {
+                    format!("{:.1}MB", state.chunk_size as f64 / (1024.0 * 1024.0))
+                }
+            };
+            let qcap = state.queue_capacity;
+            let avg_time = state.get_avg_chunk_time_ms();
+            let avg_str = if avg_time > 0.0 {
+                format!("(avg:{:.1}ms)", avg_time)
+            } else {
+                "(avg:--)".to_string()
+            };
+
+            let logs_title = format!(
+                " Log Messages (▲/▼, wheel, Home/End) ── Knobs: P:{}/{} C:{} Q:{} L:{} {} ",
+                state.active_workers.min(pool_size),
+                state.max_workers.max(pool_size),
+                chunk_size_str.replace("MB", "M"),
+                qcap,
+                state.level,
+                avg_str
+            );
+            let logs_block = Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(style_orange)
+                .title(Span::styled(
+                    logs_title,
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ));
+
+            let logs = if let Ok(buffer) = crate::get_log_buffer().lock() {
+                buffer.clone()
+            } else {
+                Vec::new()
+            };
+
+            let lines_back = crate::LOG_SCROLL_OFFSET.load(Ordering::Relaxed);
+            let logs_inner_height = chunks[2].height.saturating_sub(2) as usize;
+            let max_offset = logs.len().saturating_sub(logs_inner_height);
+            let lines_back = lines_back.min(max_offset);
+            let offset = log_window_start(logs.len(), logs_inner_height, lines_back);
+            crate::LOG_SCROLL_OFFSET.store(lines_back, Ordering::Relaxed);
+
+            let mut log_lines = Vec::new();
+            for r in 0..logs_inner_height {
+                if offset + r < logs.len() {
+                    let line_str = &logs[offset + r];
+                    let max_log_width = chunks[2].width.saturating_sub(4) as usize;
+                    let truncated = if line_str.len() > max_log_width {
+                        format!("{}...", &line_str[..max_log_width.saturating_sub(3)])
+                    } else {
+                        line_str.clone()
+                    };
+                    log_lines.push(Line::from(Span::styled(truncated, style_cyan)));
+                } else {
+                    log_lines.push(Line::from(""));
+                }
             }
-        }
-        f.render_widget(Paragraph::new(log_lines).block(logs_block), chunks[2]);
+            f.render_widget(Paragraph::new(log_lines).block(logs_block), chunks[2]);
+        };
+        render_logs();
 
         // --- 4. Footer Controls / Vertical Sliders ---
-        let footer_block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(style_orange)
-            .title(Span::styled(
-                " Pipeline Controls ",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ));
+        let mut render_footer = || {
+            let footer_block = Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(style_orange)
+                .title(Span::styled(
+                    " Pipeline Controls ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ));
 
-        let footer_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Min(28),
-                Constraint::Length(13),
-                Constraint::Length(13),
-                Constraint::Length(13),
-                Constraint::Length(13),
-            ])
-            .split(chunks[3]);
+            let footer_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Min(28),
+                    Constraint::Length(13),
+                    Constraint::Length(13),
+                    Constraint::Length(13),
+                    Constraint::Length(13),
+                ])
+                .split(chunks[3]);
 
-        // Left side paragraph
-        let key_guides = if state.is_complete {
-            vec![
-                Line::from(Span::styled("[Enter/Q/Esc]Close", style_yellow)),
-                Line::from(Span::styled("[I]RATE/CUMULATIVE", style_purple)),
-                Line::from(Span::styled("[PgUp/PgDn]Sectors", style_purple)),
-                Line::from(Span::styled("Final statistics frozen", style_purple)),
-            ]
-        } else if state.mode == TuiMode::Split {
-            vec![
-                Line::from(Span::styled("[P]Pause [-/+]Throttle", style_purple)),
-                Line::from(Span::styled("[PgUp/PgDn]Sectors [Q]Exit", style_purple)),
-                Line::from(Span::styled("[Tab]Throttle/Chunk [↑/↓]", style_purple)),
-                Line::from(Span::styled("[I]I/O mode Level/Pool fixed", style_purple)),
-            ]
-        } else {
-            vec![
-                Line::from(Span::styled("[P]Pause [-/+]Throttle", style_purple)),
-                Line::from(Span::styled("[[]/[]]Level [Q]Exit", style_purple)),
-                Line::from(Span::styled("[Tab]Focus [↑/↓]Adjust", style_purple)),
-                Line::from(Span::styled("[I]I/O mode Click/Drag", style_purple)),
-            ]
-        };
-        f.render_widget(
-            Paragraph::new(key_guides).block(footer_block),
-            footer_chunks[0],
-        );
+            // Left side paragraph
+            let key_guides = if state.is_complete {
+                vec![
+                    Line::from(Span::styled("[Enter/Q/Esc]Close", style_yellow)),
+                    Line::from(Span::styled("[I]RATE/CUMULATIVE", style_purple)),
+                    Line::from(Span::styled("[PgUp/PgDn]Sectors", style_purple)),
+                    Line::from(Span::styled("Final statistics frozen", style_purple)),
+                ]
+            } else if state.mode == ModeState::Split {
+                vec![
+                    Line::from(Span::styled("[P]Pause [-/+]Throttle", style_purple)),
+                    Line::from(Span::styled("[PgUp/PgDn]Sectors [Q]Exit", style_purple)),
+                    Line::from(Span::styled("[Tab]Throttle/Chunk [↑/↓]", style_purple)),
+                    Line::from(Span::styled("[I]I/O mode Level/Pool fixed", style_purple)),
+                ]
+            } else {
+                vec![
+                    Line::from(Span::styled("[P]Pause [-/+]Throttle", style_purple)),
+                    Line::from(Span::styled("[[]/[]]Level [Q]Exit", style_purple)),
+                    Line::from(Span::styled("[Tab]Focus [↑/↓]Adjust", style_purple)),
+                    Line::from(Span::styled("[I]I/O mode Click/Drag", style_purple)),
+                ]
+            };
+            f.render_widget(
+                Paragraph::new(key_guides).block(footer_block),
+                footer_chunks[0],
+            );
 
-        // Level Slider block
-        let level_focused = state.focused_widget == FocusedWidget::CompressionLevelSlider;
-        let level_border_style = if level_focused {
-            style_yellow
-        } else {
-            style_purple
-        };
-        let level_title = if state.mode == TuiMode::Split {
-            " Level FIXED "
-        } else if level_focused {
-            "[ Level ]"
-        } else {
-            " Level "
-        };
-        let level_block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(level_border_style)
-            .title(Span::styled(
-                level_title,
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ));
-
-        let level_val = state.level;
-        let knob_height = footer_chunks[1].height.saturating_sub(2) as usize;
-        let level_lines = if state.mode == TuiMode::Split {
-            vec![
-                "".to_string(),
-                "ENCODER".to_string(),
-                format!("LEVEL {level_val}"),
-                "FIXED".to_string(),
-            ]
-        } else {
-            format_knob_rows(
-                knob_height,
-                "9 MAX",
-                &level_val.to_string(),
-                "1 MIN",
-                (level_val.saturating_sub(1)) as f64 / 8.0,
-            )
-        }
-        .into_iter()
-        .map(|line| Line::from(Span::styled(line, style_cyan)))
-        .collect::<Vec<_>>();
-        f.render_widget(
-            Paragraph::new(level_lines).block(level_block),
-            footer_chunks[1],
-        );
-
-        // Delay Slider block
-        let delay_focused = state.focused_widget == FocusedWidget::ThrottleDelaySlider;
-        let delay_border_style = if delay_focused {
-            style_yellow
-        } else {
-            style_purple
-        };
-        let delay_title = if delay_focused {
-            "[ Throttle ]"
-        } else {
-            " Throttle "
-        };
-        let delay_block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(delay_border_style)
-            .title(Span::styled(
-                delay_title,
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ));
-
-        let delay_val = state.throttle_delay_ms;
-        let delay_lines = format_knob_rows(
-            knob_height,
-            "500 MAX",
-            &delay_val.to_string(),
-            "0 MIN",
-            delay_val as f64 / 500.0,
-        )
-        .into_iter()
-        .map(|line| Line::from(Span::styled(line, style_cyan)))
-        .collect::<Vec<_>>();
-        f.render_widget(
-            Paragraph::new(delay_lines).block(delay_block),
-            footer_chunks[2],
-        );
-
-        let chunk_focused = state.focused_widget == FocusedWidget::ChunkSizeSlider;
-        let chunk_block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(if chunk_focused {
+            // Level Slider block
+            let level_focused = state.focused_widget == FocusedWidget::CompressionLevelSlider;
+            let level_border_style = if level_focused {
                 style_yellow
             } else {
                 style_purple
-            })
-            .title(Span::styled(
-                if state.mode == TuiMode::Split {
-                    if chunk_focused {
+            };
+            let level_title = if state.mode == ModeState::Split {
+                " Level FIXED "
+            } else if level_focused {
+                "[ Level ]"
+            } else {
+                " Level "
+            };
+            let level_block = Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(level_border_style)
+                .title(Span::styled(
+                    level_title,
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ));
+
+            let level_val = state.level;
+            let knob_height = footer_chunks[1].height.saturating_sub(2) as usize;
+            let level_lines = if state.mode == ModeState::Split {
+                vec![
+                    "".to_string(),
+                    "ENCODER".to_string(),
+                    format!("LEVEL {level_val}"),
+                    "FIXED".to_string(),
+                ]
+            } else {
+                format_knob_rows(
+                    knob_height,
+                    "9 MAX",
+                    &level_val.to_string(),
+                    "1 MIN",
+                    (level_val.saturating_sub(1)) as f64 / 8.0,
+                )
+            }
+            .into_iter()
+            .map(|line| Line::from(Span::styled(line, style_cyan)))
+            .collect::<Vec<_>>();
+            f.render_widget(
+                Paragraph::new(level_lines).block(level_block),
+                footer_chunks[1],
+            );
+
+            // Delay Slider block
+            let delay_focused = state.focused_widget == FocusedWidget::ThrottleDelaySlider;
+            let delay_border_style = if delay_focused {
+                style_yellow
+            } else {
+                style_purple
+            };
+            let delay_title = if delay_focused {
+                "[ Throttle ]"
+            } else {
+                " Throttle "
+            };
+            let delay_block = Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(delay_border_style)
+                .title(Span::styled(
+                    delay_title,
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ));
+
+            let delay_val = state.throttle_delay_ms;
+            let delay_lines = format_knob_rows(
+                knob_height,
+                "500 MAX",
+                &delay_val.to_string(),
+                "0 MIN",
+                delay_val as f64 / 500.0,
+            )
+            .into_iter()
+            .map(|line| Line::from(Span::styled(line, style_cyan)))
+            .collect::<Vec<_>>();
+            f.render_widget(
+                Paragraph::new(delay_lines).block(delay_block),
+                footer_chunks[2],
+            );
+
+            let chunk_focused = state.focused_widget == FocusedWidget::ChunkSizeSlider;
+            let chunk_block = Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(if chunk_focused {
+                    style_yellow
+                } else {
+                    style_purple
+                })
+                .title(Span::styled(
+                    if state.mode == ModeState::Split {
+                        if chunk_focused {
+                            "[ Chunk ]"
+                        } else {
+                            " Chunk "
+                        }
+                    } else if chunk_focused {
                         "[ Chunk ]"
                     } else {
                         " Chunk "
-                    }
-                } else if chunk_focused {
-                    "[ Chunk ]"
-                } else {
-                    " Chunk "
-                },
-                style_yellow,
-            ));
-        let chunk_kib = state.chunk_size / 1024;
-        let chunk_fraction = (chunk_kib as f64 / 64.0).log2() / 7.0;
-        let chunk_lines = if state.mode == TuiMode::Split {
-            format_knob_rows(
+                    },
+                    style_yellow,
+                ));
+            let chunk_kib = state.chunk_size / 1024;
+            let chunk_fraction = (chunk_kib as f64 / 64.0).log2() / 7.0;
+            let chunk_lines = format_knob_rows(
                 knob_height,
                 "8192K",
                 &format!("{}K", chunk_kib),
                 "64K",
                 chunk_fraction,
             )
-        } else {
-            format_knob_rows(
-                knob_height,
-                "8192K",
-                &format!("{}K", chunk_kib),
-                "64K",
-                chunk_fraction,
-            )
-        }
-        .into_iter()
-        .map(|line| Line::from(Span::styled(line, style_cyan)))
-        .collect::<Vec<_>>();
-        f.render_widget(
-            Paragraph::new(chunk_lines).block(chunk_block),
-            footer_chunks[3],
-        );
+            .into_iter()
+            .map(|line| Line::from(Span::styled(line, style_cyan)))
+            .collect::<Vec<_>>();
+            f.render_widget(
+                Paragraph::new(chunk_lines).block(chunk_block),
+                footer_chunks[3],
+            );
 
-        let workers_focused = state.focused_widget == FocusedWidget::WorkerCountSlider;
-        let workers_block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(if workers_focused {
-                style_yellow
-            } else {
-                style_purple
-            })
-            .title(Span::styled(
-                if state.mode == TuiMode::Split {
-                    " Pool FIXED "
-                } else if workers_focused {
-                    "[ Workers ]"
+            let workers_focused = state.focused_widget == FocusedWidget::WorkerCountSlider;
+            let workers_block = Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(if workers_focused {
+                    style_yellow
                 } else {
-                    " Workers "
-                },
-                style_yellow,
-            ));
-        let worker_fraction = if state.max_workers > 1 {
-            (state.active_workers.saturating_sub(1)) as f64 / (state.max_workers - 1) as f64
-        } else {
-            1.0
+                    style_purple
+                })
+                .title(Span::styled(
+                    if state.mode == ModeState::Split {
+                        " Pool FIXED "
+                    } else if workers_focused {
+                        "[ Workers ]"
+                    } else {
+                        " Workers "
+                    },
+                    style_yellow,
+                ));
+            let worker_fraction = if state.max_workers > 1 {
+                (state.active_workers.saturating_sub(1)) as f64 / (state.max_workers - 1) as f64
+            } else {
+                1.0
+            };
+            let workers_lines = if state.mode == ModeState::Split {
+                vec![
+                    "".to_string(),
+                    "POOL".to_string(),
+                    format!("{}", state.max_workers),
+                    "FIXED".to_string(),
+                ]
+            } else {
+                format_knob_rows(
+                    knob_height,
+                    &format!("{} MAX", state.max_workers),
+                    &format!("{}/{}", state.active_workers, state.max_workers),
+                    "1 MIN",
+                    worker_fraction,
+                )
+            }
+            .into_iter()
+            .map(|line| Line::from(Span::styled(line, style_cyan)))
+            .collect::<Vec<_>>();
+            f.render_widget(
+                Paragraph::new(workers_lines).block(workers_block),
+                footer_chunks[4],
+            );
         };
-        let workers_lines = if state.mode == TuiMode::Split {
-            vec![
-                "".to_string(),
-                "POOL".to_string(),
-                format!("{}", state.max_workers),
-                "FIXED".to_string(),
-            ]
-        } else {
-            format_knob_rows(
-                knob_height,
-                &format!("{} MAX", state.max_workers),
-                &format!("{}/{}", state.active_workers, state.max_workers),
-                "1 MIN",
-                worker_fraction,
-            )
-        }
-        .into_iter()
-        .map(|line| Line::from(Span::styled(line, style_cyan)))
-        .collect::<Vec<_>>();
-        f.render_widget(
-            Paragraph::new(workers_lines).block(workers_block),
-            footer_chunks[4],
-        );
+        render_footer();
     })?;
 
     Ok(())
@@ -2330,19 +1845,19 @@ mod tests {
     #[test]
     fn test_split_focus_visits_live_throttle_and_chunk() {
         assert_eq!(
-            next_focus_for_mode(TuiMode::Split, FocusedWidget::None),
+            next_focus_for_mode(ModeState::Split, FocusedWidget::None),
             FocusedWidget::ThrottleDelaySlider
         );
         assert_eq!(
-            next_focus_for_mode(TuiMode::Split, FocusedWidget::ThrottleDelaySlider),
+            next_focus_for_mode(ModeState::Split, FocusedWidget::ThrottleDelaySlider),
             FocusedWidget::ChunkSizeSlider
         );
         assert_eq!(
-            next_focus_for_mode(TuiMode::Split, FocusedWidget::ChunkSizeSlider),
+            next_focus_for_mode(ModeState::Split, FocusedWidget::ChunkSizeSlider),
             FocusedWidget::None
         );
         assert_eq!(
-            next_focus_for_mode(TuiMode::Split, FocusedWidget::WorkerCountSlider),
+            next_focus_for_mode(ModeState::Split, FocusedWidget::WorkerCountSlider),
             FocusedWidget::ThrottleDelaySlider
         );
     }
@@ -2351,6 +1866,45 @@ mod tests {
     fn test_split_page_size_matches_responsive_body_capacity() {
         assert_eq!(split_page_size(22), 3);
         assert_eq!(split_page_size(30), 5);
+        assert_eq!(worker_page_size(22), 1);
+        assert_eq!(worker_page_size(30), 2);
+    }
+
+    #[test]
+    fn test_work_panel_paging_is_mode_aware_and_clamped() {
+        let split = Arc::new(Mutex::new(TuiState::new_split(8, 0, 9)));
+        split.lock().unwrap().terminal_rows = 22;
+        runtime::page_work_list(&split, true);
+        assert_eq!(split.lock().unwrap().split_sector_offset, 3);
+        runtime::page_work_list(&split, false);
+        assert_eq!(split.lock().unwrap().split_sector_offset, 0);
+
+        let stream = Arc::new(Mutex::new(TuiState::new_stream(8, 0, 4, 9)));
+        stream.lock().unwrap().terminal_rows = 22;
+        for _ in 0..10 {
+            runtime::page_work_list(&stream, true);
+        }
+        assert_eq!(stream.lock().unwrap().worker_offset, 3);
+        runtime::page_work_list(&stream, false);
+        assert_eq!(stream.lock().unwrap().worker_offset, 2);
+    }
+
+    #[test]
+    fn test_mouse_wheel_scrolls_only_over_left_work_panel() {
+        use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
+
+        let state = Arc::new(Mutex::new(TuiState::new_stream(8, 0, 4, 9)));
+        state.lock().unwrap().terminal_rows = 22;
+        let wheel = |column| MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert!(runtime::update_work_list_scroll(wheel(2), &state));
+        assert_eq!(state.lock().unwrap().worker_offset, 1);
+        assert!(!runtime::update_work_list_scroll(wheel(70), &state));
+        assert_eq!(state.lock().unwrap().worker_offset, 1);
     }
 
     #[test]
@@ -2420,7 +1974,7 @@ mod tests {
         let mut state = TuiState::new_stream(8, 0, 4, 9);
         state.input_queue = vec![0, 1, 2, 3, 4, 5, 6, 7, 8];
         state.output_buffer = vec![2, 4];
-        state.workers[0].status = "BUSY";
+        state.workers[0].stage = crate::pipeline::WorkerStage::Busy;
         state.workers[0].current_chunk = Some(1);
         state.active_workers = 2;
         state.chunk_size = 256 * 1024;
@@ -2534,6 +2088,59 @@ mod tests {
         state.sample_io(Duration::from_millis(100));
         assert_eq!(state.io_history[1].input_rate, 0.0);
         assert_eq!(state.io_history[1].output_rate, 0.0);
+    }
+
+    #[test]
+    fn test_mode_and_worker_lifecycle_are_typed() {
+        use crate::pipeline::{ProgressEvent, WorkerStage};
+
+        let split = TuiState::new_split(1, 100, 9);
+        assert!(matches!(split.mode, ModeState::Split));
+
+        let mut stream = TuiState::new_stream(4, 0, 1, 9);
+        assert!(matches!(stream.mode, ModeState::Stream));
+        assert_eq!(stream.workers[0].stage, WorkerStage::Idle);
+        stream.apply_progress_event(ProgressEvent::WorkerStatus {
+            worker_id: 0,
+            stage: WorkerStage::Busy,
+            current_chunk: Some(3),
+        });
+        assert_eq!(stream.workers[0].stage, WorkerStage::Busy);
+        assert_eq!(stream.workers[0].current_chunk, Some(3));
+    }
+
+    #[test]
+    fn test_reducer_and_layout_profile_are_pure_inputs() {
+        use crate::pipeline::ProgressEvent;
+
+        assert_eq!(
+            body_layout_profile(ModeState::Split),
+            BodyLayoutProfile {
+                left_percent: 60,
+                right_percent: 40,
+            }
+        );
+        assert_eq!(
+            body_layout_profile(ModeState::Stream),
+            BodyLayoutProfile {
+                left_percent: 58,
+                right_percent: 42,
+            }
+        );
+
+        let now = Instant::now();
+        let mut state = TuiState::new_stream(4, 0, 1, 9);
+        let effect = reducer::reduce_progress_event(
+            &mut state,
+            ProgressEvent::ChunkAssigned {
+                worker_id: 0,
+                seq_num: 7,
+            },
+            now,
+        );
+        assert_eq!(effect, None);
+        assert_eq!(state.workers[0].started_at, Some(now));
+        assert_eq!(state.workers[0].current_chunk, Some(7));
     }
 
     #[test]
@@ -2700,11 +2307,28 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         draw_tui(&mut terminal, &state).unwrap();
         let output = get_buffer_string(terminal.backend());
-        assert!(output.contains("STREAM WORKERS W01-W01"));
+        assert!(output.contains("WORKERS W01-W01/2"));
         assert!(output.contains("W01 BUSY C001"));
         assert!(output.contains("50.00%"));
         assert!(output.contains("R   2.00x"));
-        assert!(output.contains("ETA   2.00s"));
+        assert!(
+            output.contains("ETA   2.00s") || output.contains("ETA   2.01s"),
+            "live ETA must remain within one display tick: {output}"
+        );
+    }
+
+    #[test]
+    fn test_stream_worker_panel_renders_selected_page_and_scroll_cue() {
+        let mut state = TuiState::new_stream(8, 0, 4, 9);
+        state.worker_offset = 2;
+        let backend = TestBackend::new(80, 22);
+        let mut terminal = Terminal::new(backend).unwrap();
+        draw_tui(&mut terminal, &state).unwrap();
+        let output = get_buffer_string(terminal.backend());
+
+        assert!(output.contains("WORKERS W03-W03/4 +1 [Pg↕]"));
+        assert!(output.contains("W03 IDLE C---"));
+        assert!(!output.contains("W01 IDLE C---"));
     }
 
     #[test]
@@ -2911,7 +2535,7 @@ mod tests {
         let output = get_buffer_string(terminal.backend());
 
         assert!(output.contains("S01"));
-        assert!(output.contains("Composite + Slices"));
+        assert!(output.contains("Slices S01-S05/12 +7 [Pg↕]"));
         assert!(output.contains("AVG"));
         assert!(output.contains("DONE"));
         assert!(output.contains("RUN"));
@@ -2954,7 +2578,7 @@ mod tests {
     fn test_stream_pipeline_chunk_labels_are_one_based() {
         let mut state = TuiState::new_stream(8, 0, 4, 9);
         state.input_queue = vec![0];
-        state.workers[0].status = "BUSY";
+        state.workers[0].stage = crate::pipeline::WorkerStage::Busy;
         state.workers[0].current_chunk = Some(1);
         state.output_buffer = vec![2];
         state.next_expected_seq = 0;
@@ -3011,13 +2635,12 @@ mod tests {
             .expect("Failed to run stty size");
         let out_str = String::from_utf8_lossy(&output.stdout);
         let parts: Vec<&str> = out_str.split_whitespace().collect();
-        if parts.len() == 2 {
-            if let (Ok(expected_rows), Ok(expected_cols)) =
+        if parts.len() == 2
+            && let (Ok(expected_rows), Ok(expected_cols)) =
                 (parts[0].parse::<u16>(), parts[1].parse::<u16>())
-            {
-                assert_eq!(cols, expected_cols, "cols must match stty cols");
-                assert_eq!(rows, expected_rows, "rows must match stty rows");
-            }
+        {
+            assert_eq!(cols, expected_cols, "cols must match stty cols");
+            assert_eq!(rows, expected_rows, "rows must match stty rows");
         }
     }
 

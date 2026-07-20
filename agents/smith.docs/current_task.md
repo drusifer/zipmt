@@ -1,11 +1,12 @@
 # Current Task
 
-**Status:** Completed; defects handed off
+**Status:** Phase 1 UX gate approved
 **Assigned to:** Smith
 
-Scored full-session tool and skill use at TES 82/100. Evaluation is recorded in
-`trace_eval_tool_skill_session.md`; defects are cataloged in
-`bugs_tool_skill_session.md`.
+The user's 80x22 finding is corrected. Both work panels now share discoverable
+keyboard and mouse scrolling, truthful ranges, remaining counts, and safe
+viewport bounds. Automated interaction/render coverage and the full regression
+suite pass.
 
 ---
-*Last updated: 2026-07-18T18:34:00-04:00*
+*Last updated: 2026-07-20T10:35:00-04:00*

@@ -3,6 +3,12 @@
 This file tracks the current state of test findings, patterns, and verification metrics for the QA Guardian (Trin).
 
 ## Recent Decisions
+- **Phase 1 work-panel UX triage (2026-07-20)**: User testing at 80x22 found both Slice and Worker panels need scrolling. Classified as a UX defect: both modes require PageUp/PageDown, left-panel mouse-wheel navigation, clamped offsets, visible ranges, and recognition cues.
+- **Rust refactor Phase 1 UAT passed on retry (2026-07-18)**: Typed state, pure reducer/layout, platform/runtime/render boundaries, bounded handlers/panels, full tests, zero Clippy, and 80x22/120x30 PTY behavior pass. No TUI function remains above complexity threshold; Judge reports zero flags.
+- **Task 1.2 pure-seam UAT passed (2026-07-18)**: `tui/reducer.rs` has no I/O/terminal/process dependencies, accepts time as data, and returns completion sampling as an effect. The pure layout profile drives both mode ratios; deterministic focused tests and formatting pass.
+- **Task 1.1 typed lifecycle UAT passed (2026-07-18)**: Mode and worker lifecycle are typed end-to-end through ProgressEvent, producers, reducer state, cleanup, labels, and tests. Status strings are absent, exact display labels remain, SplitStage stays typed, and no boundary extraction was mixed into the task.
+- **Rust refactor Phase 0 behavioral UAT passed (2026-07-18)**: All four I/O pairings have exact decompression evidence; 128 MiB File-to-Stdout stays below the 96 MiB RSS ceiling; SIGINT removes incomplete Stream output; format/dead-code/metrics and Judge gates pass. Strict Clippy and five complexity failures match the pre-sprint baseline and are assigned to later phases, pending Morpheus progression approval.
+- **Task 0.1 bounded File-to-Stdout UAT passed (2026-07-18)**: Verified the whole-input allocation was replaced only by `File::open` feeding the existing bounded Stream pipeline. Real-binary Gzip decompression equivalence passed, formatting passed, errors and pipeline contracts are unchanged, and the active Judge trace had zero flags. Large-input RSS remains Task 0.2.
 - **Active-session Judge review (2026-07-18)**: Tracegate extracted 812 calls and 9 raw flags. Manual review confirmed only one Via bypass; five Make-bypass and two Make-pipe flags were false positives, and one Via flag was also false. Active-session date discovery and Codex skill-load detection are open evaluator defects.
 - **Rust quality gates established (2026-07-18)**: Make now owns formatter, strict Clippy, cognitive and cyclomatic complexity, dead-code, RustSec/cargo-deny, cargo-geiger, Miri, Valgrind, flamegraph, and bloat workflows. Initial baseline: format/dead-code and audit pass; 22 strict Clippy findings; three paths exceed cognitive threshold 20. Project license is MIT.
 - **Graph/worker UAT passed (2026-07-17)**: Verified one-second bucket gating, ten-bucket labels, worker progress reduction/rendering, one-based identity, overflow, 39 unit tests, and 7 integration tests.
@@ -23,4 +29,4 @@ This file tracks the current state of test findings, patterns, and verification 
 - **Passed Phase 1 Ratatui Migration UAT Gate**: Verified TUI runs by default on normal compression, and auto-fallback disables TUI correctly when outputs/inputs are not interactive TTYs or redirected to stdout.
 
 ---
-*Last updated: 2026-07-18T18:33:00-04:00*
+*Last updated: 2026-07-20T10:32:00-04:00*

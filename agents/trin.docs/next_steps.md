@@ -1,7 +1,9 @@
 # Next Steps
 
-- Await Neo fixes for active-session discovery, Codex Skill derivation, and shell-rule tokenization.
-- Rerun the same Judge trace after fixes and hand the result to Smith for rescoring.
+- Smith approves the corrected Phase 1 UX gate using manual and automated
+  evidence.
+- Morpheus confirms Phase 1 architecture boundary.
+- Begin Phase 2 extraction against the three known complexity hotspots.
 
 ---
-*Last updated: 2026-07-18T18:33:00-04:00*
+*Last updated: 2026-07-20T10:35:00-04:00*

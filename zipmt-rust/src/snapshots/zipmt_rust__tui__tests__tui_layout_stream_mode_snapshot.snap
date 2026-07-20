@@ -4,7 +4,7 @@ assertion_line: 2950
 expression: clean_output
 ---
 ZIPMT PIPELINE CONTROLLER ════════════════════════════════════ [STATUS: RUNNING]
-╭ STREAM WORKERS W01-W01 of 4 (+3) ──────────╮╭ I/O Flow [I] RATE MA10s ───────╮
+╭ WORKERS W01-W01/4 +3 [Pg↕] ────────────────╮╭ I/O Flow [I] RATE MA10s ───────╮
 │IN 50.00M 40.5M/s  OUT 20.00M 16.2M/s  R 2.5││IN 7.5M/s │            ⢀⣀⠤⠤⠒⠒⠉⠉⠉│
 │╭ W01 IDLE C--- ───────────────────────────╮││          │•  • ⣀⡠⠤⠔⠒⢀⣀⣀⣀⠤⠤⠤⠤⠒⠒⠉│
 ││                   0.00%                  │││          │⣀⠤⠤⠒⠒⠒⠊⠉⠉⠉⠁⣀⣀⣀⣀⣀⣀⣀⣀  │

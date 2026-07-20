@@ -1,57 +1,132 @@
-# Task Board: Slice Observability and System Telemetry
+# Task Board: Rust Boundary Refactoring Sprint
 
-## Phase 1: Stable Slice and Composite Metrics
+**Status:** Sprint complete
+**Sprint type:** Tier 2 maintenance / technical debt
+**Specification:** `docs/USER_STORIES_RUST_REFACTOR.md`
+**Architecture evidence:** `agents/morpheus.docs/RustCodeQualityReview_Summary_2026-07-18T19-05.md`
 
-- [x] **Task 1.1 — Slice timing and averages:** Track authoritative slice start/end times and derive per-slice progress, average input/output rates, and ratio. (Assignee: Neo | UAT: Trin)
-- [x] **Task 1.2 — Composite ETA:** Derive aggregate bytes/rates/ratio/counts and ETA from whole-job average throughput rather than the latest sample. (Assignee: Neo | UAT: Trin)
+## Sprint Goal
 
-## Phase 2: Shared System Telemetry
+Reduce measured Rust complexity and coupling while preserving compression
+compatibility, bounded memory, ordering, cleanup, CLI/TUI behavior, live
+controls, and measured throughput.
 
-- [x] **Task 2.1 — CPU/RSS sampling:** Sample process CPU ticks and resident memory on fixed cadence with parser tests and unsupported-platform fallback. (Assignee: Neo | UAT: Trin)
-- [x] **Task 2.2 — Shared System panel:** Render CPU and memory alongside the graph in both Split and Stream. (Assignee: Neo | UAT: Trin | UX: Smith)
+## Phase 0: Bounded I/O and Characterization
 
-## Phase 3: Responsive Slice UX
+- [x] **Task 0.1 — Stream File-to-Stdout:** Replace the whole-file allocation
+  with direct streaming and preserve existing errors and cancellation behavior.
+  (Assignee: Neo | UAT: Trin)
+- [x] **Task 0.2 — I/O and memory characterization:** Add focused coverage for
+  all file/stdin and file/stdout pairings, decompression equivalence, output
+  order, cancellation cleanup, and large-input bounded RSS. (Assignee: Neo |
+  UAT: Trin | Review: Morpheus)
 
-- [x] **Task 3.1 — Slice widgets and aggregate group:** Render dedicated detailed slice rows and a distinct composite group with truthful units and stable ETA. (Assignee: Neo | UAT: Trin | UX: Smith)
-- [x] **Task 3.2 — Responsive validation:** Preserve 80x22, expand at 120x30, update snapshots, and verify bounded-memory/output behavior. (Assignee: Neo | UAT: Trin | UX: Smith)
+**Phase gate:** Passed. Focused tests and changed-code checks pass;
+File-to-Stdout RSS is bounded below 96 MiB for a 128 MiB input. The unchanged
+strict-Clippy and complexity baseline remains binding work for Phases 1 and 2
+and blocks sprint completion, not Phase 0 progression.
 
-## Phase 4: Stable Graph Timebase
+## Phase 1: Typed and Pure TUI Seams
 
-- [x] **Task 4.1 — One-second buckets:** Decouple graph history from the 100 ms UI/system tick and emit normalized I/O samples once per second. (Assignee: Neo | UAT: Trin)
-- [x] **Task 4.2 — Ten-second moving average:** Drive the distinct moving-average trace and RATE labels from the latest ten one-second buckets. (Assignee: Neo | UAT: Trin | UX: Smith)
+- [x] **Task 1.1 — Typed mode/lifecycle state:** Introduce
+  `ModeState::{Stream, Split}` and typed worker/slice lifecycle while preserving
+  event semantics. (Assignee: Neo | UAT: Trin)
+- [x] **Task 1.2 — Pure reducer and view models:** Extract independently
+  testable progress reduction and layout/view-model calculations with no
+  terminal I/O. (Assignee: Neo | UAT: Trin)
+- [x] **Task 1.3 — Runtime/render/platform boundaries:** Separate Stream/Split
+  rendering, terminal runtime, and platform probing while preserving 80x22 and
+  expanded snapshots plus real-PTY controls/completion. (Assignee: Neo |
+  UAT: Trin | UX: Smith | Review: Morpheus)
 
-## Phase 5: Stream Worker Observability
+**Phase gate:** Snapshot, reducer, layout, control, telemetry, and real-PTY
+checks pass; no refactored TUI production function exceeds the configured
+complexity threshold.
 
-- [x] **Task 5.1 — Worker progress events:** Emit per-worker chunk input/output progress and retain authoritative timing through BUSY, HOLD, and DONE. (Assignee: Neo | UAT: Trin)
-- [x] **Task 5.2 — Stream worker board:** Render visible worker range, chunk, progress, average rate, ratio, ETA, and explicit overflow. (Assignee: Neo | UAT: Trin | UX: Smith)
+## Phase 2: Compression-Mode Orchestration
 
-## Phase 6: Compact Stream Worker Cards
+- [x] **Task 2.1 — Stream roles:** Extract reader, worker, and ordered-writer
+  loops behind a runtime boundary without changing channels, buffer ownership,
+  dynamic worker gating, cancellation, or ordering. (Assignee: Neo | UAT: Trin)
+- [x] **Task 2.2 — Split roles:** Extract range planning, slice execution,
+  artifact cleanup, and ordered concatenation while retaining reusable buffers
+  and direct encoder writes. (Assignee: Neo | UAT: Trin | Review: Morpheus)
 
-- [x] **Task 6.1 — Fixed worker cards:** Give each visible worker a bordered card with fixed status, chunk, average rate, ratio, ETA, and percent positions. (Assignee: Neo | UAT: Trin | UX: Smith)
-- [x] **Task 6.2 — Single-cell gauge:** Render worker progress as a one-cell-high gauge and preserve responsive worker overflow. (Assignee: Neo | UAT: Trin | UX: Smith)
-- [x] **Task 6.3 — Persistent fixed-point stats:** Place a dedicated fixed-position stats row below each gauge and format rate, ratio, ETA, and progress with two decimal places. (Assignee: Neo | UAT: Trin | UX: Smith)
-- [x] **Task 6.4 — Gauge label contrast:** Invert the percentage label to black-on-cyan when progress fill passes beneath it, with a rendered-cell color regression test. (Assignee: Neo | UAT: Trin | UX: Smith)
+**Phase gate:** Stream ordering, Split concatenation, bounded queues/memory,
+abort and temporary-artifact cleanup pass. Split and Stream profiles show no
+unexplained throughput regression above 5%.
 
-## Phase 7: Native Multi-series I/O Chart
+## Phase 3: Controller, Progress, and Codec Boundaries
 
-- [x] **Task 7.1 — Native mirrored datasets:** Replace the custom character matrix with one Ratatui `Chart` containing positive input and negative output Braille line datasets on a shared scale. (Assignee: Neo | UAT: Trin)
-- [x] **Task 7.2 — MA and dotted guides:** Add separate magenta MA10s datasets and muted dotted guide datasets, retaining RATE/CUMULATIVE labels and responsive snapshots. (Assignee: Neo | UAT: Trin | UX: Smith)
+- [x] **Task 3.1 — Encapsulated control/progress API:** Make controller atomics
+  private; add validated commands, snapshots, consistent results, and one
+  explicit best-effort progress policy. (Assignee: Neo | UAT: Trin)
+- [x] **Task 3.2 — Shared codec copy/control loop:** Consolidate Gzip, Bzip2,
+  and Xz copy/control behavior without extra hot-loop copies or mandatory
+  boxing; preserve direct writes and encoder boundaries. (Assignee: Neo |
+  UAT: Trin | Review: Morpheus)
 
-## Phase 8: Worker Ratio and Chart Separation
+**Phase gate:** Pause, resize, abort, level-boundary, decompression, and
+progress-disconnection checks pass. Profiles remain within the 5% regression
+budget.
 
-- [x] **Task 8.1 — Stable worker ratio:** Mark worker output as finalized explicitly, hide ratio during encoder buffering, and render only a bounded fixed-width final ratio. (Assignee: Neo | UAT: Trin)
-- [x] **Task 8.2 — Faint I/O divider:** Render the native chart zero guide as a faint continuous Braille divider while retaining dotted outer guides. (Assignee: Neo | UAT: Trin | UX: Smith)
-- [x] **Task 8.3 — Worker ratio moving average:** Retain each worker's last 10 finalized chunk ratios and display their bounded fixed-width average across subsequent assignments. (Assignee: Neo | UAT: Trin)
-- [x] **Task 8.4 — Worker rate and ETA smoothing:** Average worker throughput over a 10-chunk window including the active assignment as a provisional newest sample, and drive worker ETA from that rate. (Assignee: Neo | UAT: Trin)
+## Phase 4: Application Shell and Final Quality Baseline
 
-## References
+- [x] **Task 4.1 — Typed run plan and output guard:** Separate argument/I/O
+  resolution, execution, joining, verification, error translation, and
+  incomplete-output ownership while keeping signal handlers signal-safe.
+  (Assignee: Neo | UAT: Trin | UX: Smith)
+- [x] **Task 4.2 — Sprint-wide validation:** Verify CLI/TUI compatibility,
+  decompression equivalence, ordering, bounded memory, cleanup, live controls,
+  snapshots, real PTY behavior, and the complete deterministic Rust quality
+  baseline. (Assignee: Trin | UX: Smith | Review: Morpheus)
 
-- `docs/USER_STORIES_SLICE_OBSERVABILITY.md`
-- `docs/ARCH_SLICE_OBSERVABILITY.md`
+**Phase gate:** Strict Clippy, complexity, cyclomatic, formatting, and dead-code
+targets pass; all acceptance criteria are demonstrated and no unexplained
+throughput regression exceeds 5%.
 
-## Phase 9: Rust Quality Tooling
+## Required Quality Gates
 
-- [x] **Task 9.1 — Core quality gates:** Add Make targets for rustfmt, strict Clippy, cognitive complexity, cyclomatic metrics, and dead-code checks. (Assignee: Trin)
-- [x] **Task 9.2 — Security and analysis tools:** Add RustSec, cargo-deny, cargo-geiger, Miri, Valgrind, flamegraph, and binary-bloat workflows. (Assignee: Trin)
-- [x] **Task 9.3 — Baseline and documentation:** Install Cargo tools, document usage, and record existing quality debt without suppressing findings. (Assignee: Trin)
-- [ ] **Backlog 9.4 — CI enforcement:** Resolve baseline blockers and wire deterministic quality gates into CI. This is follow-on scope, not a Rust Quality Tooling sprint commitment. (Assignee: Tank | UAT: Trin)
+After changes in each phase, run focused tests for that phase, then:
+
+- `make rust-format-check`
+- `make rust-clippy`
+- `make rust-complexity`
+- `make rust-cyclomatic`
+- `make rust-dead-code`
+
+Do not rerun unchanged tests or gates. Performance profiles are required after
+Phases 2 and 3 and at final validation only if later changes touch hot paths.
+
+## Out of Scope
+
+- Compression rewrite, archive-format changes, channel replacement, TUI/CLI
+  redesign, unrelated features, and algorithm changes.
+- Backlog 9.4 CI enforcement. Tank receives that work only after this sprint
+  establishes a clean deterministic baseline.
+
+## Definition of Done
+
+- [x] No whole-input allocation remains in any streaming path.
+- [x] Strict Clippy and configured complexity gates pass.
+- [x] TUI, Stream, Split, controller, codec, and application-shell boundaries
+  are independently testable.
+- [x] Output compatibility, ordering, cleanup, bounded memory, controls,
+  snapshots, and real-PTY behavior pass.
+- [x] Throughput remains within the 5% regression budget.
+
+## Final Evidence
+
+- Full Rust suite: 53 library, 5 binary, 11 integration, and doc tests pass.
+- Release build and Rust security audit pass.
+- Formatting, strict Clippy, cognitive complexity, cyclomatic metrics, and
+  dead-code gates pass.
+- 128 MiB File-to-Stdout RSS remains below 96 MiB; SIGINT output cleanup passes.
+- Split uses unnamed temporary files so process termination cannot strand slice
+  artifacts.
+- User-tested 80x22 Split/Stream dashboards now provide PgUp/PgDn and scoped
+  mouse-wheel work-list scrolling with visible range cues.
+- Three alternating 32 MiB XZ level-1 runs: pre-sprint `HEAD` mean 8.281 s;
+  refactor mean 8.185 s; delta **-1.15%** (improvement).
+- `make rust-benchmark` appends revision-tagged results for the current binary
+  to a retained history ledger.

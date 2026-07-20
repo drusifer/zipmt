@@ -1,8 +1,25 @@
 # Agent Local Context (context.md)
 
+- **Rust boundary refactor sprint complete (2026-07-20):** Stream and Split
+  orchestration have named roles; controller atomics are private behind
+  snapshots/validated commands; progress is explicitly best-effort; codecs
+  share one allocation-preserving control loop; the application shell uses a
+  typed plan and output guard. All deterministic gates pass. Alternating 32 MiB
+  XZ benchmarks improved 1.15% versus pre-sprint HEAD.
+- **Longitudinal benchmark ledger (2026-07-20):** `make rust-benchmark` reuses
+  `build/rust-benchmark-input.bin` and appends YAML records keyed by revision,
+  dirty state, workload hash, configuration, mean time, and throughput. The
+  retained ledger is `benchmarks/rust-history.yaml`.
+
 This file tracks the current state of code implementations and tech stacks maintained by the Software Engineer (Neo).
 
 ## Recent Decisions
+- **Phase 1 complexity fix and PTY automation (2026-07-18)**: Runtime event policy is split into bounded key/mouse/control helpers and rendering is split into bounded panel closures. TUI no longer appears in the complexity gate. Added `make rust-pty-smoke`; real PTY passes at 80x22 and 120x30 with output integrity and terminal cleanup.
+- **TUI platform/runtime/render boundaries and zero Clippy baseline (2026-07-18)**: Added platform, runtime, and render modules; isolated terminal lifecycle and simplified platform fallbacks. Full tests pass and strict Clippy is now clean. Phase 1 remains open because run/draw still exceed cognitive complexity and require a focused fix loop.
+- **Pure reducer and body layout profile (2026-07-18)**: Progress transitions now live in `tui/reducer.rs`, accept an injected Instant, perform no I/O, and return a process-sampling request for the runtime wrapper. Rendering consumes a pure mode-to-body-layout profile. Terminal polling/widgets remain unmoved for Task 1.3.
+- **Typed TUI mode and worker lifecycle (2026-07-18)**: `ModeState::{Stream, Split}` replaces `TuiMode`, and `WorkerStage::{Off, Idle, Busy, Hold}` now flows through ProgressEvent, Stream producers, TUI reduction, cleanup, rendering labels, and tests. String lifecycle state is removed without moving reducer/runtime/rendering boundaries.
+- **Phase 0 I/O characterization (2026-07-18)**: All four I/O pairings now have real-binary equivalence evidence. A Linux 128 MiB File-to-Stdout regression requires peak RSS below 96 MiB and validates the decoded zero stream. SIGINT against stdin-to-file Stream must exit 2 and remove its incomplete output. Existing strict Clippy/complexity failures are confined to the recorded baseline, not Phase 0 changes.
+- **Bounded File-to-Stdout streaming (2026-07-18)**: File input destined for stdout is now opened and passed directly to `compress_stream`; the prior whole-input `std::fs::read` and cursor are removed. A focused Gzip file-to-stdout decompression test passes, and the Make wrapper now forwards `test-rust ARGS` for bounded test execution.
 - **MLflow-style Judge efficiency rubric (2026-07-18)**: Judge deterministically flags exact duplicate tools, unchanged immediate retries, tests repeated without edits, repeated searches without scope/edit changes, and existing duplicate reads. Stateful polling tools are exempt. Reports emit a YES/NO efficiency verdict and specific findings.
 - **Judge shell classification fix (2026-07-18)**: Quote-aware shell segmentation now evaluates only executable positions, distinguishes `|` from `||`, and confines Via heuristics to each `rg`/`grep` segment. Full-session flags fell from 9 to the single confirmed Via violation.
 - **Unified chunk-buffer reuse (2026-07-18)**: Stream transfers its reader allocation without cloning and feeds the chunk directly to encoders. Split workers reuse one heap chunk, replacing it only at atomic Chunk-size read boundaries; encoder output still writes directly to temporary slice files. Bounded verbose logs expose worker range, chunk replacement, 10% milestones, temp output, completion, and final concatenation.
@@ -46,4 +63,4 @@ This file tracks the current state of code implementations and tech stacks maint
 - **CLI Opt-In TUI Bug Fix (R3)**: Resolved TUI defaulting issue. Made TUI strictly opt-in via `-T`/`--tui` with non-TTY/redirection override fallback to false, and environment override `ZIPMT_FORCE_TUI` to true. Updated integration tests to verify opt-in and override logic.
 
 ---
-*Last updated: 2026-07-18T18:44:00-04:00*
+*Last updated: 2026-07-18T20:15:00-04:00*

@@ -43,7 +43,19 @@ graph. `rust-bloat` reports release binary size by crate.
 make rust-miri
 make rust-memcheck MEMCHECK_ARGS="-o /tmp/out.xz /path/to/input"
 make rust-profile PROFILE_ARGS="-o /tmp/out.xz /path/to/input"
+
+# Build and benchmark the current revision, then append one history record.
+make rust-benchmark RUNS=3
 ```
+
+The first run creates a stable 32 MiB workload at
+`build/rust-benchmark-input.bin`. Every invocation reuses that workload and
+appends a timestamped, revision-tagged record to
+`benchmarks/rust-history.yaml`, including dirty-worktree state, workload hash,
+mean time, and throughput. Commit the history file to compare revisions over
+time; keep the generated workload in `build/` on the benchmark host. The
+history is seeded with the sprint-closing measurements; their workload hash is
+marked unavailable because that temporary input predated the retained fixture.
 
 Miri requires the nightly Miri component. Memcheck requires Valgrind.
 Flamegraphs require `cargo-flamegraph` and the platform profiler (`perf` on

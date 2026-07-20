@@ -4,7 +4,7 @@ assertion_line: 2883
 expression: clean_output
 ---
 ZIPMT PIPELINE CONTROLLER ════════════════════════════════════ [STATUS: RUNNING]
-╭ Composite + Slices S01-S03 of 4 (+1) ────────╮╭ I/O Flow [I] RATE MA10s ─────╮
+╭ Slices S01-S03/4 +1 [Pg↕] ───────────────────╮╭ I/O Flow [I] RATE MA10s ─────╮
 │TOTAL  44% 1/4 RATIO 2.50x ETA 2s             ││IN 0B/s │                     │
 │IN 175.0K / 400.0K  OUT 70.0K  ACTIVE 2       ││        │•                    │
 │S01 DONE [██████████████████] 100% 100.0K / 10││        │⡀                    │

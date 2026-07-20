@@ -86,10 +86,10 @@ fn main() {
 
     let args = Args::parse();
 
-    let compressor: Arc<Box<dyn Compressor + Send + Sync>> = Arc::new(match args.algo.as_str() {
-        "gz" => Box::new(GzipCompressor { level: args.level }),
-        "bz2" => Box::new(Bzip2Compressor { level: args.level }),
-        "xz" => Box::new(XzCompressor { level: args.level }),
+    let compressor: Arc<dyn Compressor + Send + Sync> = match args.algo.as_str() {
+        "gz" => Arc::new(GzipCompressor { level: args.level }),
+        "bz2" => Arc::new(Bzip2Compressor { level: args.level }),
+        "xz" => Arc::new(XzCompressor { level: args.level }),
         other => {
             eprintln!(
                 "Error: Unknown algorithm '{}'. Supported: xz, bz2, gz",
@@ -97,17 +97,17 @@ fn main() {
             );
             std::process::exit(1);
         }
-    });
+    };
 
     // Setup signal handler for Ctrl-C safety
     let cleanup_mutex = get_output_path_mutex().clone();
     if let Err(e) = ctrlc::set_handler(move || {
         eprintln!("\nReceived interrupt. Aborting and cleaning up...");
         let guard = cleanup_mutex.lock().unwrap();
-        if let Some(ref path) = *guard {
-            if path.exists() {
-                let _ = std::fs::remove_file(path);
-            }
+        if let Some(ref path) = *guard
+            && path.exists()
+        {
+            let _ = std::fs::remove_file(path);
         }
         std::process::exit(2);
     }) {
@@ -122,10 +122,10 @@ fn main() {
             eprintln!("Error: {}", e);
             // Delete output file on failure
             let guard = get_output_path_mutex().lock().unwrap();
-            if let Some(ref path) = *guard {
-                if path.exists() {
-                    let _ = std::fs::remove_file(path);
-                }
+            if let Some(ref path) = *guard
+                && path.exists()
+            {
+                let _ = std::fs::remove_file(path);
             }
             match e {
                 ZipError::Verification(_) => std::process::exit(3),
@@ -135,153 +135,192 @@ fn main() {
     }
 }
 
-fn run_app(args: Args, compressor: Arc<Box<dyn Compressor + Send + Sync>>) -> Result<(), ZipError> {
+struct RunPlan {
+    input_source: InputSource,
+    output_destination: OutputDestination,
+    input_path: Option<PathBuf>,
+    threads: usize,
+    run_tui: bool,
+}
+
+struct OutputGuard {
+    path: Option<PathBuf>,
+    armed: bool,
+}
+
+impl OutputGuard {
+    fn new(destination: &OutputDestination) -> Self {
+        let path = match destination {
+            OutputDestination::File(path) => Some(path.clone()),
+            OutputDestination::Stdout => None,
+        };
+        *get_output_path_mutex().lock().unwrap() = path.clone();
+        Self { path, armed: true }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+        *get_output_path_mutex().lock().unwrap() = None;
+    }
+}
+
+impl Drop for OutputGuard {
+    fn drop(&mut self) {
+        if self.armed
+            && let Some(path) = &self.path
+        {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+fn verify_input(args: &Args, compressor: &dyn Compressor) -> Result<(), ZipError> {
+    let Some(input) = args.input_file.as_deref().filter(|input| *input != "-") else {
+        return Err(ZipError::Verification(
+            "Cannot verify stream from standard input".into(),
+        ));
+    };
+    let input_path = Path::new(input);
+    if !input_path.exists() {
+        return Err(ZipError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("Input file not found: {:?}", input_path),
+        )));
+    }
+    compressor.verify(&std::fs::read(input_path)?)?;
+    eprintln!("Verification succeeded for {:?}", input_path);
+    Ok(())
+}
+
+fn default_output_path(input: &str, algorithm: &str) -> PathBuf {
+    let extension = match algorithm {
+        "gz" => "gz",
+        "bz2" => "bz2",
+        _ => "xz",
+    };
+    let mut path = PathBuf::from(input);
+    let new_extension = path.extension().map_or_else(
+        || extension.to_string(),
+        |existing| format!("{}.{}", existing.to_string_lossy(), extension),
+    );
+    path.set_extension(new_extension);
+    path
+}
+
+fn resolve_run_plan(args: &Args) -> RunPlan {
+    let input_path = args
+        .input_file
+        .as_deref()
+        .filter(|input| *input != "-")
+        .map(PathBuf::from);
+    let input_source = input_path
+        .clone()
+        .map_or(InputSource::Stdin, InputSource::File);
+    let output_destination = if args.stdout {
+        OutputDestination::Stdout
+    } else if let Some(output) = &args.output {
+        OutputDestination::File(PathBuf::from(output))
+    } else if let Some(input) = args.input_file.as_deref().filter(|input| *input != "-") {
+        OutputDestination::File(default_output_path(input, &args.algo))
+    } else {
+        OutputDestination::Stdout
+    };
+    let run_tui = should_run_tui(
+        args.tui,
+        args.no_tui,
+        std::env::var("ZIPMT_FORCE_TUI").is_ok(),
+        std::io::stderr().is_terminal(),
+    );
+    RunPlan {
+        input_source,
+        output_destination,
+        input_path,
+        threads: args.threads.unwrap_or(0),
+        run_tui,
+    }
+}
+
+fn resolved_workers(threads: usize) -> usize {
+    if threads > 0 {
+        threads
+    } else {
+        std::thread::available_parallelism().map_or(4, |count| count.get())
+    }
+}
+
+fn initial_tui_state(plan: &RunPlan, level: u32) -> Arc<Mutex<tui::TuiState>> {
+    let workers = resolved_workers(plan.threads);
+    if let Some(input_path) = &plan.input_path {
+        let file_size = std::fs::metadata(input_path).map_or(0, |metadata| metadata.len() as usize);
+        Arc::new(Mutex::new(tui::TuiState::new_split(
+            workers, file_size, level,
+        )))
+    } else {
+        Arc::new(Mutex::new(tui::TuiState::new_stream(
+            workers * 2,
+            0,
+            workers,
+            level,
+        )))
+    }
+}
+
+fn run_pipeline(
+    plan: &RunPlan,
+    level: u32,
+    compressor: Arc<dyn Compressor + Send + Sync>,
+) -> Result<(), ZipError> {
+    let pipeline = CompressionPipeline::with_level(compressor, plan.threads, level);
+    let (controller, receiver, handle) = pipeline.run(
+        match &plan.input_source {
+            InputSource::File(path) => InputSource::File(path.clone()),
+            InputSource::Stdin => InputSource::Stdin,
+        },
+        match &plan.output_destination {
+            OutputDestination::File(path) => OutputDestination::File(path.clone()),
+            OutputDestination::Stdout => OutputDestination::Stdout,
+        },
+    );
+    if plan.run_tui {
+        TUI_ACTIVE.store(true, Ordering::Relaxed);
+        return tui::run_tui_on_main_thread(
+            initial_tui_state(plan, level),
+            receiver,
+            controller,
+            handle,
+        );
+    }
+    while let Ok(event) = receiver.recv() {
+        if let ProgressEvent::Error(error) = event {
+            return Err(error);
+        }
+    }
+    handle.join().unwrap_or_else(|_| {
+        Err(ZipError::Io(std::io::Error::other(
+            "Compression thread panicked",
+        )))
+    })
+}
+
+fn run_app(args: Args, compressor: Arc<dyn Compressor + Send + Sync>) -> Result<(), ZipError> {
     VERBOSE.store(args.verbose, Ordering::Relaxed);
     log_verbose!("Starting zipmt-rust utility...");
     log_verbose!("Selected compression algorithm: {}", args.algo);
 
-    let is_stdin = args.input_file.is_none() || args.input_file.as_deref() == Some("-");
-    let threads_count = args.threads.unwrap_or(0);
-
     if args.test {
-        log_verbose!(
-            "Running in Verification/Integrity Test mode on input: {:?}",
-            args.input_file
-        );
-        // Verification mode
-        if is_stdin {
-            return Err(ZipError::Verification(
-                "Cannot verify stream from standard input".into(),
-            ));
-        }
-        let input_path = Path::new(args.input_file.as_ref().unwrap());
-        if !input_path.exists() {
-            return Err(ZipError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("Input file not found: {:?}", input_path),
-            )));
-        }
-        log_verbose!("Reading target compressed file: {:?}", input_path);
-        let input_data = std::fs::read(input_path)?;
-        log_verbose!("Decompressing and verifying stream integrity...");
-        compressor.verify(&input_data)?;
-        eprintln!("Verification succeeded for {:?}", input_path);
-        return Ok(());
+        return verify_input(&args, compressor.as_ref());
     }
 
-    // The TUI owns stderr, so piped stdin and redirected compression output are safe.
-    // Only the terminal used by Crossterm needs to be interactive.
-    let stderr_is_tty = std::io::stderr().is_terminal();
-    let force_tui = std::env::var("ZIPMT_FORCE_TUI").is_ok();
-    let run_tui = should_run_tui(args.tui, args.no_tui, force_tui, stderr_is_tty);
-
-    // Determine input source and output destination
-    let input_source = if is_stdin {
-        InputSource::Stdin
-    } else {
-        InputSource::File(PathBuf::from(args.input_file.as_ref().unwrap()))
-    };
-
-    let output_dest = if args.stdout {
-        OutputDestination::Stdout
-    } else if let Some(ref out) = args.output {
-        OutputDestination::File(PathBuf::from(out))
-    } else if is_stdin {
-        OutputDestination::Stdout
-    } else {
-        let ext = match args.algo.as_str() {
-            "gz" => "gz",
-            "bz2" => "bz2",
-            _ => "xz",
-        };
-        let mut p = PathBuf::from(args.input_file.as_ref().unwrap());
-        let new_ext = match p.extension() {
-            Some(existing) => format!("{}.{}", existing.to_string_lossy(), ext),
-            None => ext.to_string(),
-        };
-        p.set_extension(new_ext);
-        OutputDestination::File(p)
-    };
-
-    // Register path for Ctrl-C cleanup
-    if let OutputDestination::File(ref out_path) = output_dest {
-        let mut guard = get_output_path_mutex().lock().unwrap();
-        *guard = Some(out_path.clone());
-    }
-
-    // Setup the pipeline
-    let pipeline = CompressionPipeline::with_level(compressor, threads_count, args.level);
-    let (controller, rx, comp_handle) = pipeline.run(input_source, output_dest);
-
-    // Set initial compression level in the controller
-    controller.update_level(args.level);
-
-    let res = if run_tui {
-        TUI_ACTIVE.store(true, Ordering::Relaxed);
-        let state = if is_stdin {
-            let pool_size = if threads_count > 0 {
-                threads_count
-            } else {
-                std::thread::available_parallelism()
-                    .map(|n| n.get())
-                    .unwrap_or(4)
-            };
-            Arc::new(Mutex::new(tui::TuiState::new_stream(
-                pool_size * 2,
-                0,
-                pool_size,
-                args.level,
-            )))
-        } else {
-            let input_path = Path::new(args.input_file.as_ref().unwrap());
-            let file_size = std::fs::metadata(input_path)
-                .map(|m| m.len() as usize)
-                .unwrap_or(0);
-            let chunks_count = if threads_count > 0 {
-                threads_count
-            } else {
-                std::thread::available_parallelism()
-                    .map(|n| n.get())
-                    .unwrap_or(4)
-            };
-            Arc::new(Mutex::new(tui::TuiState::new_split(
-                chunks_count,
-                file_size,
-                args.level,
-            )))
-        };
-
-        // Run TUI loop on main thread
-        tui::run_tui_on_main_thread(state, rx, controller, comp_handle)
-    } else {
-        // Run raw mode (no TUI). We consume rx and then join the thread
-        while let Ok(event) = rx.recv() {
-            match event {
-                ProgressEvent::Error(err) => {
-                    return Err(err);
-                }
-                _ => {}
-            }
-        }
-        match comp_handle.join() {
-            Ok(res) => res,
-            Err(_) => Err(ZipError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Compression thread panicked",
-            ))),
-        }
-    };
-
-    if res.is_ok() && args.delete && !is_stdin {
-        let input_path = Path::new(args.input_file.as_ref().unwrap());
-        log_verbose!(
-            "--delete option active. Removing source file: {:?}",
-            input_path
-        );
+    let plan = resolve_run_plan(&args);
+    let mut output_guard = OutputGuard::new(&plan.output_destination);
+    run_pipeline(&plan, args.level, compressor)?;
+    output_guard.disarm();
+    if args.delete
+        && let Some(input_path) = plan.input_path
+    {
         std::fs::remove_file(input_path)?;
     }
-
-    res
+    Ok(())
 }
 
 #[cfg(test)]
