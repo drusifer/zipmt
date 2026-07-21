@@ -3,6 +3,10 @@
 This file tracks the current state of technical vision, architecture, and decisions made by the Tech Lead (Morpheus).
 
 ## Recent Decisions
+- **Rust Refactor 3 architecture approved (2026-07-20):** Active render,
+  chart, terminal/runtime, command, and startup boundaries follow the approved
+  dependency direction. Coordinators are bounded, state commands are shared
+  where appropriate, all gates pass, and compression hot paths are unchanged.
 - **Approved Rust refactor Task 1.2 (2026-07-18)**: Reducer owns pure state transitions and reports runtime effects; runtime owns process sampling. Rendering consumes a pure layout profile. Dependency direction is correct and no terminal dependency leaks into reduction.
 - **Approved Rust refactor Task 1.1 (2026-07-18)**: Typed ModeState and WorkerStage establish the state vocabulary without changing event authority or moving reducer/runtime/render/platform code. Typed producers eliminate invalid status strings and label mapping preserves the user surface.
 - **Approved Rust refactor Phase 0 progression (2026-07-18)**: Bounded File-to-Stdout plus four-pairing, ordering, 128 MiB/96 MiB RSS, and SIGINT-cleanup characterization pass. The unchanged Clippy and five complexity hotspots are the baseline that motivates Phases 1 and 2; they remain binding final blockers but do not deadlock Phase 0 progression.

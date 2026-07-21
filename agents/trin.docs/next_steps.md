@@ -1,9 +1,7 @@
 # Next Steps
 
-- Smith approves the corrected Phase 1 UX gate using manual and automated
-  evidence.
-- Morpheus confirms Phase 1 architecture boundary.
-- Begin Phase 2 extraction against the three known complexity hotspots.
+- Smith confirms the frozen Split/Stream UX and command behavior.
+- Morpheus confirms final architecture boundaries and epic closure.
 
 ---
-*Last updated: 2026-07-20T10:35:00-04:00*
+*Last updated: 2026-07-20T11:45:00-04:00*

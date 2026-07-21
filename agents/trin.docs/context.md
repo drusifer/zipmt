@@ -3,6 +3,10 @@
 This file tracks the current state of test findings, patterns, and verification metrics for the QA Guardian (Trin).
 
 ## Recent Decisions
+- **Rust Refactor 3 final UAT passed (2026-07-20):** All ten
+  non-functional enhancement tasks pass full tests, unchanged snapshots,
+  formatter/Clippy/complexity/dead-code, release, 80x22 PTY restoration,
+  dependency audit, and the longitudinal performance budget.
 - **Phase 1 work-panel UX triage (2026-07-20)**: User testing at 80x22 found both Slice and Worker panels need scrolling. Classified as a UX defect: both modes require PageUp/PageDown, left-panel mouse-wheel navigation, clamped offsets, visible ranges, and recognition cues.
 - **Rust refactor Phase 1 UAT passed on retry (2026-07-18)**: Typed state, pure reducer/layout, platform/runtime/render boundaries, bounded handlers/panels, full tests, zero Clippy, and 80x22/120x30 PTY behavior pass. No TUI function remains above complexity threshold; Judge reports zero flags.
 - **Task 1.2 pure-seam UAT passed (2026-07-18)**: `tui/reducer.rs` has no I/O/terminal/process dependencies, accepts time as data, and returns completion sampling as an effect. The pure layout profile drives both mode ratios; deterministic focused tests and formatting pass.

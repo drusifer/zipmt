@@ -2,10 +2,7 @@
 
 ## Immediate Next Action
 
-Neo implements Task 1.3: separate platform probes, terminal runtime, and
-rendering entry points while preserving snapshots and real-PTY behavior.
-
-Keep panel-level splits incremental; do not redesign widgets or controls.
+Epic is complete. Commit and push when requested.
 
 ## Completed Deliverable
 
@@ -16,6 +13,9 @@ Keep panel-level splits incremental; do not redesign widgets or controls.
 - `RustRefactorTask1_1_Review_Summary_2026-07-18T20-00.md`
 - `RustRefactorTask1_2_Review_Summary_2026-07-18T20-03.md`
 - `docs/USER_STORIES_RUST_REFACTOR.md`
+- `docs/EPIC_RUST_REFACTOR_3.md`
+- `docs/ARCH_RUST_REFACTOR_3.md`
+- `RustRefactor3_Final_Review_2026-07-20T11-46.md`
 
 ---
-*Last updated: 2026-07-18T20:03:00-04:00*
+*Last updated: 2026-07-20T11:46:00-04:00*

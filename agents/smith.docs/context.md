@@ -3,6 +3,10 @@
 This file tracks the HCI evaluations, gate reviews, and usability criteria maintained by the HCI Expert (Smith).
 
 ## Recent Decisions
+- **Rust Refactor 3 UX gate approved (2026-07-20):** The user-approved 80x22
+  Split and Stream surfaces remain snapshot-identical. Real PTY restoration,
+  paging, keyboard precedence, mouse regions, controls, completion, and
+  diagnostics remain unchanged; the epic introduces no feature or redesign.
 - **Phase 1 PTY gate blocked after two approaches (2026-07-18)**: First PTY automation waited at interactive completion; second exited with valid output/terminal cleanup but captured no dashboard text, and semicolon chaining hid the failed assertion. Anti-loop requires user direction before a third approach using nontrivial input and enforced assertion propagation.
 - **Approved combined Rust refactor plan (2026-07-18)**: The Tier 2 stories and architecture preserve CLI/TUI behavior, output compatibility, progress visibility, user controls, diagnostics, cancellation, cleanup, terminal layouts, and real-PTY completion. Bounded RSS, decompression equivalence, ordering, quality gates, and a 5% throughput budget are blocking acceptance criteria.
 - **Judge tool/skill TES (2026-07-18)**: Scored the complete active Codex rollout from its July 16 start at 82/100. Nine raw flags reduce to one confirmed Via bypass. Active/latest discovery, Codex skill-load visibility, and shell-rule false positives require correction.

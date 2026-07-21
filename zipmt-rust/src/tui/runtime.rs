@@ -12,9 +12,15 @@ use ratatui::backend::CrosstermBackend;
 use super::TuiState;
 use super::{FocusedWidget, ModeState};
 
+#[derive(Debug, PartialEq, Eq)]
 pub(super) enum RuntimeAction {
     Continue,
     Exit,
+    Abort,
+}
+
+pub(super) enum SessionOutcome {
+    Complete,
     Abort,
 }
 
@@ -44,15 +50,33 @@ fn handle_key(
     state: &Arc<Mutex<TuiState>>,
     controller: &crate::pipeline::PipelineController,
 ) -> RuntimeAction {
+    if let Some(action) = global_key_action(code, state, controller) {
+        return action;
+    }
+    if handle_work_list_key(code, state) {
+        return RuntimeAction::Continue;
+    }
+    if handle_control_key(code, state, controller) {
+        return RuntimeAction::Continue;
+    }
+    handle_log_key(code);
+    RuntimeAction::Continue
+}
+
+fn global_key_action(
+    code: KeyCode,
+    state: &Arc<Mutex<TuiState>>,
+    controller: &crate::pipeline::PipelineController,
+) -> Option<RuntimeAction> {
     match code {
         KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
-            if state.lock().unwrap().is_complete {
+            Some(if state.lock().unwrap().is_complete {
                 RuntimeAction::Exit
             } else {
                 RuntimeAction::Abort
-            }
+            })
         }
-        KeyCode::Enter if state.lock().unwrap().is_complete => RuntimeAction::Exit,
+        KeyCode::Enter if state.lock().unwrap().is_complete => Some(RuntimeAction::Exit),
         KeyCode::Char('p') | KeyCode::Char('P') => {
             let current = controller.is_paused();
             if current {
@@ -61,59 +85,66 @@ fn handle_key(
                 controller.pause();
             }
             state.lock().unwrap().is_paused = !current;
-            RuntimeAction::Continue
+            Some(RuntimeAction::Continue)
         }
         KeyCode::Char('i') | KeyCode::Char('I') => {
             state.lock().unwrap().toggle_io_chart_mode();
-            RuntimeAction::Continue
+            Some(RuntimeAction::Continue)
         }
+        _ => None,
+    }
+}
+
+fn handle_work_list_key(code: KeyCode, state: &Arc<Mutex<TuiState>>) -> bool {
+    match code {
+        KeyCode::PageUp => page_work_list(state, false),
+        KeyCode::PageDown => page_work_list(state, true),
+        _ => return false,
+    }
+    true
+}
+
+fn handle_control_key(
+    code: KeyCode,
+    state: &Arc<Mutex<TuiState>>,
+    controller: &crate::pipeline::PipelineController,
+) -> bool {
+    match code {
         KeyCode::Char('-') => {
             update_throttle(state, controller, true);
-            RuntimeAction::Continue
         }
         KeyCode::Char('+') | KeyCode::Char('=') => {
             update_throttle(state, controller, false);
-            RuntimeAction::Continue
         }
         KeyCode::Char('[') => {
             update_level(state, controller, false);
-            RuntimeAction::Continue
         }
         KeyCode::Char(']') => {
             update_level(state, controller, true);
-            RuntimeAction::Continue
         }
         KeyCode::Tab => {
             let mut state = state.lock().unwrap();
             state.focused_widget = super::next_focus_for_mode(state.mode, state.focused_widget);
-            RuntimeAction::Continue
-        }
-        KeyCode::PageUp => {
-            page_work_list(state, false);
-            RuntimeAction::Continue
-        }
-        KeyCode::PageDown => {
-            page_work_list(state, true);
-            RuntimeAction::Continue
-        }
-        KeyCode::Home => {
-            crate::LOG_SCROLL_OFFSET.store(usize::MAX, Ordering::Relaxed);
-            RuntimeAction::Continue
-        }
-        KeyCode::End => {
-            crate::LOG_SCROLL_OFFSET.store(0, Ordering::Relaxed);
-            RuntimeAction::Continue
         }
         KeyCode::Up => {
             adjust_focused(state, controller, true);
-            RuntimeAction::Continue
         }
         KeyCode::Down => {
             adjust_focused(state, controller, false);
-            RuntimeAction::Continue
         }
-        _ => RuntimeAction::Continue,
+        _ => return false,
     }
+    true
+}
+
+fn handle_log_key(code: KeyCode) -> bool {
+    let offset = match code {
+        KeyCode::Home => usize::MAX,
+        KeyCode::End => 0,
+        _ => return false,
+    };
+    crate::LOG_SCROLL_OFFSET.store(offset, Ordering::Relaxed);
+    true
 }
 
 fn update_level(
@@ -130,8 +161,16 @@ fn update_level(
     } else {
         current.saturating_sub(1).max(1)
     };
-    controller.update_level(next);
-    state.lock().unwrap().level = next;
+    set_level(state, controller, next);
+}
+
+fn set_level(
+    state: &Arc<Mutex<TuiState>>,
+    controller: &crate::pipeline::PipelineController,
+    level: u32,
+) {
+    controller.update_level(level);
+    state.lock().unwrap().level = level;
 }
 
 fn update_throttle(
@@ -145,8 +184,16 @@ fn update_throttle(
     } else {
         current.saturating_sub(50)
     };
-    controller.update_throttle(next);
-    state.lock().unwrap().throttle_delay_ms = next;
+    set_throttle(state, controller, next);
+}
+
+fn set_throttle(
+    state: &Arc<Mutex<TuiState>>,
+    controller: &crate::pipeline::PipelineController,
+    delay: u64,
+) {
+    controller.update_throttle(delay);
+    state.lock().unwrap().throttle_delay_ms = delay;
 }
 
 pub(super) fn page_work_list(state: &Arc<Mutex<TuiState>>, forward: bool) {
@@ -322,16 +369,14 @@ fn update_control_from_mouse(
     if mode == ModeState::Stream && (controls_left..=controls_left + 12).contains(&col) {
         let fraction = super::slider_fraction(slider_row, control_height);
         let level = (9.0 - fraction * 8.0).round() as u32;
-        controller.update_level(level);
+        set_level(state, controller, level);
         let mut state = state.lock().unwrap();
-        state.level = level;
         state.focused_widget = FocusedWidget::CompressionLevelSlider;
     } else if (controls_left + 13..=controls_left + 25).contains(&col) {
         let fraction = super::slider_fraction(slider_row, control_height);
         let delay = ((1.0 - fraction) * 500.0).round() as u64;
-        controller.update_throttle(delay);
+        set_throttle(state, controller, delay);
         let mut state = state.lock().unwrap();
-        state.throttle_delay_ms = delay;
         state.focused_widget = FocusedWidget::ThrottleDelaySlider;
     } else if (controls_left + 26..=controls_left + 38).contains(&col) {
         let chunk_size = super::chunk_size_from_slider_row(slider_row, control_height);
@@ -383,6 +428,96 @@ impl Drop for TerminalGuard {
         );
         let _ = stderr.flush();
     }
+}
+
+fn drain_progress(
+    receiver: &std::sync::mpsc::Receiver<crate::pipeline::ProgressEvent>,
+    state: &Arc<Mutex<TuiState>>,
+) {
+    while let Ok(event) = receiver.try_recv() {
+        state.lock().unwrap().apply_progress_event(event);
+    }
+}
+
+fn poll_input(
+    tick_rate: std::time::Duration,
+    state: &Arc<Mutex<TuiState>>,
+    controller: &crate::pipeline::PipelineController,
+) -> RuntimeAction {
+    if !crossterm::event::poll(tick_rate).unwrap_or(false) {
+        return RuntimeAction::Continue;
+    }
+    let mut action = RuntimeAction::Continue;
+    while crossterm::event::poll(std::time::Duration::ZERO).unwrap_or(false) {
+        match handle_event(crossterm::event::read().unwrap(), state, controller) {
+            RuntimeAction::Continue => {}
+            RuntimeAction::Exit => action = RuntimeAction::Exit,
+            RuntimeAction::Abort => return RuntimeAction::Abort,
+        }
+    }
+    action
+}
+
+fn render_tick(
+    guard: &mut TerminalGuard,
+    state: &Arc<Mutex<TuiState>>,
+    tick_rate: std::time::Duration,
+) {
+    let mut state = state.lock().unwrap();
+    let now = std::time::Instant::now();
+    let elapsed = now.duration_since(state.last_speed_update);
+    if !state.is_complete && elapsed >= tick_rate {
+        state.sample_system_metrics(elapsed);
+        state.last_speed_update = now;
+    }
+    if !state.is_complete {
+        state.sample_io_bucket(now);
+    }
+    let _ = super::draw_tui(&mut guard.terminal, &state);
+}
+
+fn join_compression(
+    handle: std::thread::JoinHandle<Result<(), crate::compressor::ZipError>>,
+) -> Result<(), crate::compressor::ZipError> {
+    handle.join().unwrap_or_else(|_| {
+        Err(crate::compressor::ZipError::Io(std::io::Error::other(
+            "Compression thread panicked",
+        )))
+    })
+}
+
+pub(super) fn drive_session(
+    guard: &mut TerminalGuard,
+    state: &Arc<Mutex<TuiState>>,
+    receiver: &std::sync::mpsc::Receiver<crate::pipeline::ProgressEvent>,
+    controller: &crate::pipeline::PipelineController,
+    handle: std::thread::JoinHandle<Result<(), crate::compressor::ZipError>>,
+) -> Result<SessionOutcome, crate::compressor::ZipError> {
+    let tick_rate = std::time::Duration::from_millis(100);
+    let hold_on_complete = std::env::var("ZIPMT_FORCE_TUI").ok().as_deref() != Some("1");
+    loop {
+        drain_progress(receiver, state);
+        match poll_input(tick_rate, state, controller) {
+            RuntimeAction::Continue => {}
+            RuntimeAction::Exit => break,
+            RuntimeAction::Abort => {
+                controller.abort();
+                crate::cleanup_output_file();
+                return Ok(SessionOutcome::Abort);
+            }
+        }
+        render_tick(guard, state, tick_rate);
+        if !hold_on_complete && state.lock().unwrap().is_complete {
+            break;
+        }
+        if handle.is_finished() {
+            drain_progress(receiver, state);
+            if !state.lock().unwrap().is_complete {
+                break;
+            }
+        }
+    }
+    join_compression(handle).map(|()| SessionOutcome::Complete)
 }
 
 pub fn run_tui_on_main_thread(

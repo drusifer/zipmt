@@ -1,12 +1,11 @@
 # Current Task
 
-**Status:** Phase 1 UX gate approved
+**Status:** Rust Refactor 3 UX gate approved / handed to Morpheus
 **Assigned to:** Smith
 
-The user's 80x22 finding is corrected. Both work panels now share discoverable
-keyboard and mouse scrolling, truthful ranges, remaining counts, and safe
-viewport bounds. Automated interaction/render coverage and the full regression
-suite pass.
+Confirmed the non-functional refactor preserves the user-approved 80x22 Split
+and Stream surfaces, scrolling, controls, completion, diagnostics, and terminal
+restoration. No UX blocker remains.
 
 ---
-*Last updated: 2026-07-20T10:35:00-04:00*
+*Last updated: 2026-07-20T11:46:00-04:00*

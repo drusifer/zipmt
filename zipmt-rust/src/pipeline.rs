@@ -238,6 +238,73 @@ pub enum OutputDestination {
     Stdout,
 }
 
+fn run_file_to_file(
+    input: PathBuf,
+    output: PathBuf,
+    compressor: &dyn Compressor,
+    threads: usize,
+    progress: std::sync::mpsc::Sender<ProgressEvent>,
+    controller: &PipelineController,
+) -> Result<(), ZipError> {
+    crate::split_mode::compress_file(&input, &output, compressor, threads, progress, controller)
+}
+
+fn run_file_to_stdout(
+    input: PathBuf,
+    compressor: &dyn Compressor,
+    threads: usize,
+    progress: std::sync::mpsc::Sender<ProgressEvent>,
+    controller: &PipelineController,
+) -> Result<(), ZipError> {
+    let mut input = std::fs::File::open(input)?;
+    let mut output = std::io::stdout();
+    crate::stream_mode::compress_stream(
+        &mut input,
+        &mut output,
+        compressor,
+        threads,
+        progress,
+        controller,
+    )
+}
+
+fn run_stdin_to_file(
+    output: PathBuf,
+    compressor: &dyn Compressor,
+    threads: usize,
+    progress: std::sync::mpsc::Sender<ProgressEvent>,
+    controller: &PipelineController,
+) -> Result<(), ZipError> {
+    let mut input = std::io::stdin();
+    let mut output = std::fs::File::create(output)?;
+    crate::stream_mode::compress_stream(
+        &mut input,
+        &mut output,
+        compressor,
+        threads,
+        progress,
+        controller,
+    )
+}
+
+fn run_stdin_to_stdout(
+    compressor: &dyn Compressor,
+    threads: usize,
+    progress: std::sync::mpsc::Sender<ProgressEvent>,
+    controller: &PipelineController,
+) -> Result<(), ZipError> {
+    let mut input = std::io::stdin();
+    let mut output = std::io::stdout();
+    crate::stream_mode::compress_stream(
+        &mut input,
+        &mut output,
+        compressor,
+        threads,
+        progress,
+        controller,
+    )
+}
+
 pub struct CompressionPipeline {
     compressor: Arc<dyn Compressor + Send + Sync>,
     num_threads: usize,
@@ -287,57 +354,35 @@ impl CompressionPipeline {
         let handle = std::thread::spawn(move || {
             let res = match (input_source, output_dest) {
                 (InputSource::File(in_path), OutputDestination::File(out_path)) => {
-                    crate::split_mode::compress_file(
-                        &in_path,
-                        &out_path,
+                    run_file_to_file(
+                        in_path,
+                        out_path,
                         compressor.as_ref(),
                         num_threads,
                         tx.clone(),
                         &controller_clone,
                     )
                 }
-                (InputSource::File(in_path), OutputDestination::Stdout) => {
-                    match std::fs::File::open(&in_path) {
-                        Ok(mut input_file) => {
-                            let mut stdout = std::io::stdout();
-                            crate::stream_mode::compress_stream(
-                                &mut input_file,
-                                &mut stdout,
-                                compressor.as_ref(),
-                                num_threads,
-                                tx.clone(),
-                                &controller_clone,
-                            )
-                        }
-                        Err(e) => Err(ZipError::Io(e)),
-                    }
-                }
-                (InputSource::Stdin, OutputDestination::File(out_path)) => {
-                    let mut stdin = std::io::stdin();
-                    match std::fs::File::create(&out_path) {
-                        Ok(mut out_file) => crate::stream_mode::compress_stream(
-                            &mut stdin,
-                            &mut out_file,
-                            compressor.as_ref(),
-                            num_threads,
-                            tx.clone(),
-                            &controller_clone,
-                        ),
-                        Err(e) => Err(ZipError::Io(e)),
-                    }
-                }
-                (InputSource::Stdin, OutputDestination::Stdout) => {
-                    let mut stdin = std::io::stdin();
-                    let mut stdout = std::io::stdout();
-                    crate::stream_mode::compress_stream(
-                        &mut stdin,
-                        &mut stdout,
-                        compressor.as_ref(),
-                        num_threads,
-                        tx.clone(),
-                        &controller_clone,
-                    )
-                }
+                (InputSource::File(in_path), OutputDestination::Stdout) => run_file_to_stdout(
+                    in_path,
+                    compressor.as_ref(),
+                    num_threads,
+                    tx.clone(),
+                    &controller_clone,
+                ),
+                (InputSource::Stdin, OutputDestination::File(out_path)) => run_stdin_to_file(
+                    out_path,
+                    compressor.as_ref(),
+                    num_threads,
+                    tx.clone(),
+                    &controller_clone,
+                ),
+                (InputSource::Stdin, OutputDestination::Stdout) => run_stdin_to_stdout(
+                    compressor.as_ref(),
+                    num_threads,
+                    tx.clone(),
+                    &controller_clone,
+                ),
             };
 
             match res {

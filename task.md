@@ -1,132 +1,96 @@
-# Task Board: Rust Boundary Refactoring Sprint
+# Task Board: Rust Non-Functional Boundary Enhancements
 
-**Status:** Sprint complete
-**Sprint type:** Tier 2 maintenance / technical debt
-**Specification:** `docs/USER_STORIES_RUST_REFACTOR.md`
-**Architecture evidence:** `agents/morpheus.docs/RustCodeQualityReview_Summary_2026-07-18T19-05.md`
+**Status:** Complete
+**Work type:** Non-functional enhancement
+**Sprint tier:** Tier 2 maintenance / technical debt
+**Epic:** `docs/EPIC_RUST_REFACTOR_3.md`
+**Architecture:** `docs/ARCH_RUST_REFACTOR_3.md`
 
-## Sprint Goal
+## Objective
 
-Reduce measured Rust complexity and coupling while preserving compression
-compatibility, bounded memory, ordering, cleanup, CLI/TUI behavior, live
-controls, and measured throughput.
+Improve maintainability, modularity, testability, and terminal failure-path
+reliability without adding features or changing observable behavior.
 
-## Phase 0: Bounded I/O and Characterization
+## Phase 0: Dashboard Panel Boundaries
 
-- [x] **Task 0.1 — Stream File-to-Stdout:** Replace the whole-file allocation
-  with direct streaming and preserve existing errors and cancellation behavior.
+- [x] **Task 0.1 — Characterize panel contracts:** Lock Split, Stream,
+  I/O/process, logs, footer/controls, small-terminal, and completion rendering
+  with focused assertions around the existing snapshots.
   (Assignee: Neo | UAT: Trin)
-- [x] **Task 0.2 — I/O and memory characterization:** Add focused coverage for
-  all file/stdin and file/stdout pairings, decompression equivalence, output
-  order, cancellation cleanup, and large-input bounded RSS. (Assignee: Neo |
-  UAT: Trin | Review: Morpheus)
+- [x] **Task 0.2 — Extract standalone panels:** Move each panel body from
+  `draw_tui_impl` into a named renderer with narrow immutable context.
+  (Assignee: Neo | UAT: Trin | UX: Smith | Review: Morpheus)
 
-**Phase gate:** Passed. Focused tests and changed-code checks pass;
-File-to-Stdout RSS is bounded below 96 MiB for a 128 MiB input. The unchanged
-strict-Clippy and complexity baseline remains binding work for Phases 1 and 2
-and blocks sprint completion, not Phase 0 progression.
+**Gate:** `draw_tui_impl` is a bounded coordinator; snapshots are unchanged;
+each extracted renderer is at or below cognitive complexity 20.
 
-## Phase 1: Typed and Pure TUI Seams
+## Phase 1: Chart Composition
 
-- [x] **Task 1.1 — Typed mode/lifecycle state:** Introduce
-  `ModeState::{Stream, Split}` and typed worker/slice lifecycle while preserving
-  event semantics. (Assignee: Neo | UAT: Trin)
-- [x] **Task 1.2 — Pure reducer and view models:** Extract independently
-  testable progress reduction and layout/view-model calculations with no
-  terminal I/O. (Assignee: Neo | UAT: Trin)
-- [x] **Task 1.3 — Runtime/render/platform boundaries:** Separate Stream/Split
-  rendering, terminal runtime, and platform probing while preserving 80x22 and
-  expanded snapshots plus real-PTY controls/completion. (Assignee: Neo |
-  UAT: Trin | UX: Smith | Review: Morpheus)
-
-**Phase gate:** Snapshot, reducer, layout, control, telemetry, and real-PTY
-checks pass; no refactored TUI production function exceeds the configured
-complexity threshold.
-
-## Phase 2: Compression-Mode Orchestration
-
-- [x] **Task 2.1 — Stream roles:** Extract reader, worker, and ordered-writer
-  loops behind a runtime boundary without changing channels, buffer ownership,
-  dynamic worker gating, cancellation, or ordering. (Assignee: Neo | UAT: Trin)
-- [x] **Task 2.2 — Split roles:** Extract range planning, slice execution,
-  artifact cleanup, and ordered concatenation while retaining reusable buffers
-  and direct encoder writes. (Assignee: Neo | UAT: Trin | Review: Morpheus)
-
-**Phase gate:** Stream ordering, Split concatenation, bounded queues/memory,
-abort and temporary-artifact cleanup pass. Split and Stream profiles show no
-unexplained throughput regression above 5%.
-
-## Phase 3: Controller, Progress, and Codec Boundaries
-
-- [x] **Task 3.1 — Encapsulated control/progress API:** Make controller atomics
-  private; add validated commands, snapshots, consistent results, and one
-  explicit best-effort progress policy. (Assignee: Neo | UAT: Trin)
-- [x] **Task 3.2 — Shared codec copy/control loop:** Consolidate Gzip, Bzip2,
-  and Xz copy/control behavior without extra hot-loop copies or mandatory
-  boxing; preserve direct writes and encoder boundaries. (Assignee: Neo |
-  UAT: Trin | Review: Morpheus)
-
-**Phase gate:** Pause, resize, abort, level-boundary, decompression, and
-progress-disconnection checks pass. Profiles remain within the 5% regression
-budget.
-
-## Phase 4: Application Shell and Final Quality Baseline
-
-- [x] **Task 4.1 — Typed run plan and output guard:** Separate argument/I/O
-  resolution, execution, joining, verification, error translation, and
-  incomplete-output ownership while keeping signal handlers signal-safe.
+- [x] **Task 1.1 — Extract chart view model:** Separate scale, guides, labels,
+  averages, and series preparation from Ratatui widget construction.
+  (Assignee: Neo | UAT: Trin)
+- [x] **Task 1.2 — Extract chart widget renderer:** Build axes/datasets from the
+  view model and preserve rate/cumulative and mirrored presentation.
   (Assignee: Neo | UAT: Trin | UX: Smith)
-- [x] **Task 4.2 — Sprint-wide validation:** Verify CLI/TUI compatibility,
-  decompression equivalence, ordering, bounded memory, cleanup, live controls,
-  snapshots, real PTY behavior, and the complete deterministic Rust quality
-  baseline. (Assignee: Trin | UX: Smith | Review: Morpheus)
 
-**Phase gate:** Strict Clippy, complexity, cyclomatic, formatting, and dead-code
-targets pass; all acceptance criteria are demonstrated and no unexplained
-throughput regression exceeds 5%.
+**Gate:** `render_history_chart` is replaced by bounded preparation/rendering
+functions; chart and dashboard snapshots remain unchanged.
 
-## Required Quality Gates
+## Phase 2: Terminal Runtime Lifecycle
 
-After changes in each phase, run focused tests for that phase, then:
+- [x] **Task 2.1 — Terminal session guard:** Add RAII ownership for raw mode,
+  alternate screen, mouse capture, and restoration.
+  (Assignee: Neo | UAT: Trin)
+- [x] **Task 2.2 — Runtime role extraction:** Separate event polling, progress
+  draining, frame ticks, and pipeline join/error handling.
+  (Assignee: Neo | UAT: Trin | Review: Morpheus)
 
-- `make rust-format-check`
-- `make rust-clippy`
-- `make rust-complexity`
-- `make rust-cyclomatic`
-- `make rust-dead-code`
+**Gate:** terminal restoration passes success, abort, compression-error, and
+covered panic paths; runtime coordinator stays below complexity thresholds.
 
-Do not rerun unchanged tests or gates. Performance profiles are required after
-Phases 2 and 3 and at final validation only if later changes touch hot paths.
+## Phase 3: Command-Family Dispatch
+
+- [x] **Task 3.1 — Keyboard command families:** Extract global, work-list,
+  control, and log navigation dispatchers with unchanged precedence.
+  (Assignee: Neo | UAT: Trin)
+- [x] **Task 3.2 — Keyboard/mouse consistency:** Reuse state commands where
+  practical and verify mode-specific navigation/control behavior.
+  (Assignee: Neo | UAT: Trin | UX: Smith)
+
+**Gate:** input behavior and mouse regions are unchanged; production
+dispatchers remain below configured thresholds.
+
+## Phase 4: Application Startup Services
+
+- [x] **Task 4.1 — Startup policy services:** Extract typed compressor
+  resolution, signal installation, cleanup registration, and pure exit-code
+  mapping from `main`.
+  (Assignee: Neo | UAT: Trin)
+- [x] **Task 4.2 — Epic validation:** Run full behavioral, UX, quality,
+  release, audit, cleanup, and longitudinal performance gates.
+  (Assignee: Trin | UX: Smith | Review: Morpheus)
+
+**Gate:** CLI help, diagnostics, verification, cleanup, and exit codes are
+unchanged; all deterministic gates pass; performance is within 5%.
+
+## Non-Functional Requirements
+
+- Maintainability: reduce concentration and coupling.
+- Testability: each boundary is independently exercised.
+- Reliability: terminal and output cleanup ownership is explicit.
+- Compatibility: no observable CLI/TUI behavior changes.
+- Performance: no unexplained same-workload regression above 5%.
 
 ## Out of Scope
 
-- Compression rewrite, archive-format changes, channel replacement, TUI/CLI
-  redesign, unrelated features, and algorithm changes.
-- Backlog 9.4 CI enforcement. Tank receives that work only after this sprint
-  establishes a clean deterministic baseline.
+- Features, UX redesign, new controls, or changed CLI/error text.
+- Compression codecs, archive formats, channels, or worker algorithms.
+- CI and deployment changes.
 
 ## Definition of Done
 
-- [x] No whole-input allocation remains in any streaming path.
-- [x] Strict Clippy and configured complexity gates pass.
-- [x] TUI, Stream, Split, controller, codec, and application-shell boundaries
-  are independently testable.
-- [x] Output compatibility, ordering, cleanup, bounded memory, controls,
-  snapshots, and real-PTY behavior pass.
-- [x] Throughput remains within the 5% regression budget.
-
-## Final Evidence
-
-- Full Rust suite: 53 library, 5 binary, 11 integration, and doc tests pass.
-- Release build and Rust security audit pass.
-- Formatting, strict Clippy, cognitive complexity, cyclomatic metrics, and
-  dead-code gates pass.
-- 128 MiB File-to-Stdout RSS remains below 96 MiB; SIGINT output cleanup passes.
-- Split uses unnamed temporary files so process termination cannot strand slice
-  artifacts.
-- User-tested 80x22 Split/Stream dashboards now provide PgUp/PgDn and scoped
-  mouse-wheel work-list scrolling with visible range cues.
-- Three alternating 32 MiB XZ level-1 runs: pre-sprint `HEAD` mean 8.281 s;
-  refactor mean 8.185 s; delta **-1.15%** (improvement).
-- `make rust-benchmark` appends revision-tagged results for the current binary
-  to a retained history ledger.
+- [x] All five non-functional enhancement stories pass.
+- [x] Target coordinators and dispatchers are bounded.
+- [x] Snapshots and binary behavior remain unchanged.
+- [x] Full deterministic quality and release gates pass.
+- [x] Revision-tagged benchmark remains within budget.

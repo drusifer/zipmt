@@ -86,22 +86,46 @@ fn main() {
 
     let args = Args::parse();
 
-    let compressor: Arc<dyn Compressor + Send + Sync> = match args.algo.as_str() {
-        "gz" => Arc::new(GzipCompressor { level: args.level }),
-        "bz2" => Arc::new(Bzip2Compressor { level: args.level }),
-        "xz" => Arc::new(XzCompressor { level: args.level }),
-        other => {
-            eprintln!(
-                "Error: Unknown algorithm '{}'. Supported: xz, bz2, gz",
-                other
-            );
+    let compressor = match resolve_compressor(&args.algo, args.level) {
+        Ok(compressor) => compressor,
+        Err(message) => {
+            eprintln!("Error: {message}");
             std::process::exit(1);
         }
     };
 
-    // Setup signal handler for Ctrl-C safety
+    if let Err(error) = install_signal_handler() {
+        eprintln!("Warning: Failed to set signal handler: {error}");
+    }
+
+    match run_app(args, compressor) {
+        Ok(_) => std::process::exit(0),
+        Err(error) => {
+            eprintln!("Error: {error}");
+            cleanup_registered_output();
+            std::process::exit(exit_code_for_error(&error));
+        }
+    }
+}
+
+fn resolve_compressor(
+    algorithm: &str,
+    level: u32,
+) -> Result<Arc<dyn Compressor + Send + Sync>, String> {
+    match algorithm {
+        "gz" => Ok(Arc::new(GzipCompressor { level })),
+        "bz2" => Ok(Arc::new(Bzip2Compressor { level })),
+        "xz" => Ok(Arc::new(XzCompressor { level })),
+        other => Err(format!(
+            "Unknown algorithm '{}'. Supported: xz, bz2, gz",
+            other
+        )),
+    }
+}
+
+fn install_signal_handler() -> Result<(), ctrlc::Error> {
     let cleanup_mutex = get_output_path_mutex().clone();
-    if let Err(e) = ctrlc::set_handler(move || {
+    ctrlc::set_handler(move || {
         eprintln!("\nReceived interrupt. Aborting and cleaning up...");
         let guard = cleanup_mutex.lock().unwrap();
         if let Some(ref path) = *guard
@@ -110,28 +134,22 @@ fn main() {
             let _ = std::fs::remove_file(path);
         }
         std::process::exit(2);
-    }) {
-        eprintln!("Warning: Failed to set signal handler: {}", e);
+    })
+}
+
+fn cleanup_registered_output() {
+    let guard = get_output_path_mutex().lock().unwrap();
+    if let Some(ref path) = *guard
+        && path.exists()
+    {
+        let _ = std::fs::remove_file(path);
     }
+}
 
-    let result = run_app(args, compressor);
-
-    match result {
-        Ok(_) => std::process::exit(0),
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            // Delete output file on failure
-            let guard = get_output_path_mutex().lock().unwrap();
-            if let Some(ref path) = *guard
-                && path.exists()
-            {
-                let _ = std::fs::remove_file(path);
-            }
-            match e {
-                ZipError::Verification(_) => std::process::exit(3),
-                _ => std::process::exit(2),
-            }
-        }
+fn exit_code_for_error(error: &ZipError) -> i32 {
+    match error {
+        ZipError::Verification(_) => 3,
+        _ => 2,
     }
 }
 
@@ -325,7 +343,7 @@ fn run_app(args: Args, compressor: Arc<dyn Compressor + Send + Sync>) -> Result<
 
 #[cfg(test)]
 mod tests {
-    use super::{Args, should_run_tui};
+    use super::{Args, exit_code_for_error, resolve_compressor, should_run_tui};
     use clap::{CommandFactory, Parser};
 
     #[test]
@@ -356,5 +374,32 @@ mod tests {
 
         let help = Args::command().render_long_help().to_string();
         assert!(help.contains("defaults to 9"));
+    }
+
+    #[test]
+    fn compressor_resolution_is_typed_and_preserves_diagnostic() {
+        assert!(resolve_compressor("xz", 5).is_ok());
+        assert!(resolve_compressor("gz", 5).is_ok());
+        assert!(resolve_compressor("bz2", 5).is_ok());
+        assert_eq!(
+            resolve_compressor("zip", 5).err().as_deref(),
+            Some("Unknown algorithm 'zip'. Supported: xz, bz2, gz")
+        );
+    }
+
+    #[test]
+    fn verification_errors_have_the_distinct_exit_code() {
+        assert_eq!(
+            exit_code_for_error(&zipmt_rust::compressor::ZipError::Verification(
+                "failed".into()
+            )),
+            3
+        );
+        assert_eq!(
+            exit_code_for_error(&zipmt_rust::compressor::ZipError::Io(
+                std::io::Error::other("failed")
+            )),
+            2
+        );
     }
 }

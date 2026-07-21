@@ -1,8 +1,7 @@
 # Next Steps
 
 ## Immediate Next Action
-- Morpheus ratifies the binding architecture and sequence in
-  `docs/USER_STORIES_RUST_REFACTOR.md`.
+- Neo begins Phase 0 from root `task.md`.
 
 ## Waiting On
 - Morpheus architecture ratification, then Smith's combined Tier 2 review.
@@ -13,4 +12,4 @@
   `task.md`.
 
 ---
-*Last updated: 2026-07-18T19:44:00-04:00*
+*Last updated: 2026-07-20T11:21:00-04:00*

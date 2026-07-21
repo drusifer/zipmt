@@ -55,3 +55,36 @@ results:
     threads: 2
     mean_seconds: 7.939623
     throughput_mib_s: 4.030
+  - timestamp_utc: 2026-07-20T15:23:28Z
+    revision: c9c5d3c8d1dc
+    dirty: true
+    runs: 3
+    input_bytes: 33554432
+    input_sha256: 5efd35177b90b73c3d4f4d89f0d9e207805118f765ee2b1fdf7bfb8fa5eedb27
+    algorithm: xz
+    level: 1
+    threads: 2
+    mean_seconds: 8.691490
+    throughput_mib_s: 3.682
+  - timestamp_utc: 2026-07-20T15:24:03Z
+    revision: c9c5d3c8d1dc
+    dirty: true
+    runs: 3
+    input_bytes: 33554432
+    input_sha256: 5efd35177b90b73c3d4f4d89f0d9e207805118f765ee2b1fdf7bfb8fa5eedb27
+    algorithm: xz
+    level: 1
+    threads: 2
+    mean_seconds: 8.293030
+    throughput_mib_s: 3.859
+  - timestamp_utc: 2026-07-20T15:44:40Z
+    revision: c9c5d3c8d1dc
+    dirty: true
+    runs: 3
+    input_bytes: 33554432
+    input_sha256: 5efd35177b90b73c3d4f4d89f0d9e207805118f765ee2b1fdf7bfb8fa5eedb27
+    algorithm: xz
+    level: 1
+    threads: 2
+    mean_seconds: 8.289207
+    throughput_mib_s: 3.860

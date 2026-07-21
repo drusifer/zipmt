@@ -10,6 +10,12 @@
   `build/rust-benchmark-input.bin` and appends YAML records keyed by revision,
   dirty state, workload hash, configuration, mean time, and throughput. The
   retained ledger is `benchmarks/rust-history.yaml`.
+- **Rust Refactor 3 implementation (2026-07-20):** Dashboard panels are named
+  renderers behind a bounded coordinator; chart preparation and Ratatui
+  composition are separate; terminal lifetime is RAII-owned; runtime polling,
+  draining, ticking, and joining are separate roles; keyboard commands are
+  family-dispatched with shared mouse setters; startup resolution, signal
+  installation, cleanup, and exit policy are typed services.
 
 This file tracks the current state of code implementations and tech stacks maintained by the Software Engineer (Neo).
 

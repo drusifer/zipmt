@@ -23,3 +23,4 @@ This document records the historical sprint data for the `zipmt` project.
 | Native Multi-series I/O Chart Sprint | 2026-07-17 | 2 / 2 | 7 | Replace custom graph text with signed Braille Chart datasets, MA10s overlays, and dotted guides. |
 | Worker Ratio and Chart Separation Sprint | 2026-07-17 | 4 / 4 | 7 | Add 10-chunk worker rate/ratio smoothing, stable ETA, and a faint native center divider. |
 | Rust Quality Tooling Sprint | 2026-07-18 | 3 / 3 | Audit passed | Add reproducible Rust formatting, lint, complexity, security, memory-analysis, profiling, and size-analysis workflows. |
+| Rust Refactor 3 Non-Functional Enhancements | 2026-07-20 | 10 / 10 | Full suite + PTY + audit | Extract dashboard/chart, terminal/runtime, command, and startup boundaries without observable behavior changes. |

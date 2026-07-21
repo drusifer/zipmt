@@ -1,13 +1,12 @@
 # Current Task
 
-**Status:** Completed / handed to architecture ratification
+**Status:** Rust Refactor 2 stories complete / approved
 **Assigned to:** Cypher
 **Started:** 2026-07-18T19:43:00-04:00
 **Finished:** 2026-07-18T19:44:00-04:00
 
 ## Task Description
-Define Rust boundary-refactoring stories and acceptance criteria for the
-approved Tier 2 maintenance sprint.
+Define the next presentation and dispatch refactor sprint.
 
 ## Progress
 - [x] Recovered the approved analyzer-backed review.
@@ -22,4 +21,4 @@ None
 None yet
 
 ---
-*Last updated: 2026-07-18T19:44:00-04:00*
+*Last updated: 2026-07-20T11:21:00-04:00*

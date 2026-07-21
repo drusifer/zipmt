@@ -3,6 +3,10 @@
 This file tracks active sprint plans, velocity, and coordination details maintained by the Scrum Master (Mouse).
 
 ## Recent Decisions
+- **Closed Rust Refactor 3 epic (2026-07-20):** Closed 10/10
+  non-functional enhancement tasks across dashboard, chart, terminal/runtime,
+  command, and startup boundaries. All behavioral, UX, quality, release, audit,
+  and performance gates pass. Velocity is 111 tasks across 20 sprints.
 - **Opened Rust Boundary Refactoring sprint (2026-07-18)**: Planned 11 tasks across five small phases: bounded File-to-Stdout and characterization; typed/pure TUI seams; Stream/Split orchestration; controller/progress/codec boundaries; and application-shell/final validation. Root `task.md` is authoritative. Each phase carries focused QA, architecture/UX gates where relevant, bounded-memory and compatibility constraints, and a 5% performance budget.
 - **Closed Rust Quality Tooling sprint (2026-07-18)**: Closed 3/3 setup tasks after MIT license and dependency audit passed. CI enforcement is explicitly backlog, not committed scope. Velocity is 101 tasks across 19 sprints.
 - **Closed graph/Stream worker sprint (2026-07-17)**: Closed 4/4 with 39 unit + 7 integration tests; velocity is 88 tasks across 15 sprints.
