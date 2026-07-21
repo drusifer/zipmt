@@ -15,6 +15,6 @@ __pycache__/
 # Local files & backups
 .rustup_home/
 backup.tar
-.perf.data.*
+**/.perf.data*
 *.png
 target/
