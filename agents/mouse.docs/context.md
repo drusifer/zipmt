@@ -3,6 +3,11 @@
 This file tracks active sprint plans, velocity, and coordination details maintained by the Scrum Master (Mouse).
 
 ## Recent Decisions
+- **Context-clear checkpoint (2026-07-21):** Rust Refactor 3 is committed and
+  pushed as `2e1bd24` on `master`; local and remote heads match. The only
+  remaining worktree entries are pre-existing/unrelated deletions of `help.gz`
+  and `out.gz`, plus untracked `zipmt-rust/perf.data*`; preserve them unless the
+  user explicitly requests cleanup.
 - **Closed Rust Refactor 3 epic (2026-07-20):** Closed 10/10
   non-functional enhancement tasks across dashboard, chart, terminal/runtime,
   command, and startup boundaries. All behavioral, UX, quality, release, audit,

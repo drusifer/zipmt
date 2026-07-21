@@ -1,13 +1,14 @@
 # Next Steps
 
 ## Immediate Next Action
-- Mouse closes the nine-task Split TUI uplift sprint and updates velocity.
+- Smith performs the final readability and documentation accuracy review.
 
 ## Waiting On
-- Mouse sprint-close audit.
+- Smith UX approval.
 
 ## Planned Work
-- Preserve Decision 17 and Lesson 18 during future mode/control changes.
+- Regenerate screenshots with `make rust-tui-screenshots` after intentional
+  changes to the 80x22 TUI snapshots.
 
 ---
-*Last updated: 2026-07-17T15:22:00-04:00*
+*Last updated: 2026-07-21T13:06:00-04:00*

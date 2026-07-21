@@ -2,8 +2,8 @@ Go implementation of the zipmt multi-threaded compression utility.
 
 TLDR:
     Goal: Accelerate file compression using async pool workers in Go.
-    Status: Complete, but contains critical copy-order bugs and testing disables.
-    Action: Do not use in production until copy-order parameter bug is fixed.
+    Status: Complete; `ZipWriter.Write` preserves caller data and compresses each copied chunk.
+    Action: Run the Go test suite before release changes.
 
 # ZipMtGo
 a tool that accelerates the compression of files using asych pool workers

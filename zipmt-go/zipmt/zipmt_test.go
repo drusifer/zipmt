@@ -4,11 +4,41 @@ import (
 	"bufio"
 	"bytes"
 	"compress/bzip2"
+	"compress/gzip"
+	"io"
 	"testing"
 )
 
-func TestZipMt(t *testing.T) {
-	t.Fatal("Wrong Answer")
+func TestZipWriterPreservesInputData(t *testing.T) {
+	input := []byte("Data that crosses several chunks")
+	original := bytes.Clone(input)
+	output := new(bytes.Buffer)
+	writer := NewZipWriter(output, GZ, 5)
+
+	if _, err := writer.Write(input); err != nil {
+		t.Fatalf("ZipWriter.Write got error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("ZipWriter.Close got error: %v", err)
+	}
+	if !bytes.Equal(input, original) {
+		t.Fatalf("ZipWriter.Write mutated its input: got %q want %q", input, original)
+	}
+
+	reader, err := gzip.NewReader(output)
+	if err != nil {
+		t.Fatalf("gzip.NewReader got error: %v", err)
+	}
+	decompressed, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("reading compressed output failed: %v", err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatalf("closing gzip reader failed: %v", err)
+	}
+	if !bytes.Equal(decompressed, original) {
+		t.Fatalf("decompressed data mismatch: got %q want %q", decompressed, original)
+	}
 }
 
 func TestCompress(t *testing.T) {

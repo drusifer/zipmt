@@ -1,8 +1,9 @@
 # Next Steps
 
-- Trin confirms the recorded deterministic and PTY evidence.
-- Smith confirms frozen 80x22 Split/Stream UX and input behavior.
-- Morpheus performs final architecture review.
+- Trin verifies the focused `TestZipWriterPreservesInputData` regression.
+- Treat `TestCompressBZ2` as an independent pre-existing defect; do not broaden
+  this data-copy fix without user direction.
+- Preserve unrelated `help.gz`, `out.gz`, and `zipmt-rust/perf.data*` changes.
 
 ---
-*Last updated: 2026-07-20T11:45:00-04:00*
+*Last updated: 2026-07-21T13:01:00-04:00*

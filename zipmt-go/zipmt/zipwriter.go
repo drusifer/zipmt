@@ -35,7 +35,7 @@ func (w *ZipWriter) Write(data []byte) (n int, err error) {
 		chunkz := end - start
 		if chunkz > 0 {
 			chunk := make([]byte, chunkz)
-			copy(data[start:start+chunkz], chunk)
+			copy(chunk, data[start:start+chunkz])
 
 			//create a ZipPart using the written data and send it to the queue
 			part := ZipPart{

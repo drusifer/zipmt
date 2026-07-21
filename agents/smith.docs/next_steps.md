@@ -1,6 +1,8 @@
 # Next Steps
 
-- Morpheus performs the final architecture and epic closure review.
+- Preserve the screenshot alt text and tested-fixture generation path when the
+  dashboard changes.
+- Await the user's next documentation or UX request.
 
 ---
-*Last updated: 2026-07-20T11:46:00-04:00*
+*Last updated: 2026-07-21T13:09:00-04:00*

@@ -18,13 +18,19 @@ endif
 
 # ── Bob Protocol Targets ─────────────────────────────────────────────────────
 
-.PHONY: tldr test judge-tools-install judge-trace judge-trace-test test-rust format-rust rust-format-check rust-clippy rust-complexity rust-cyclomatic rust-dead-code rust-quality rust-audit rust-unsafe rust-miri rust-memcheck rust-profile rust-profile-report rust-profile-stream rust-benchmark rust-callgrind rust-bloat rust-quality-full rust-tools-check rust-tools-install build-rust build-rust-debug rust-pty-smoke via_index install_bob update_bob pull_bob clean_bob diff_bob
+.PHONY: tldr test test-go format-go judge-tools-install judge-trace judge-trace-test test-rust format-rust rust-format-check rust-clippy rust-complexity rust-cyclomatic rust-dead-code rust-quality rust-audit rust-unsafe rust-miri rust-memcheck rust-profile rust-profile-report rust-profile-stream rust-benchmark rust-callgrind rust-bloat rust-quality-full rust-tools-check rust-tools-install build-rust build-rust-debug rust-pty-smoke rust-tui-screenshots via_index install_bob update_bob pull_bob clean_bob diff_bob
 
 tldr: ## Show TL;DR summaries from all project files (quick orientation for agents)
 	@rg --no-heading "TLDR:" --glob "*.md" -N | sed 's|^\./||' | sort
 
 test: ## Run unit tests
 	@python -m unittest discover -s tests
+
+test-go: ## Run Go unit tests
+	@cd zipmt-go && go test ./... $(ARGS)
+
+format-go: ## Format Go sources
+	@cd zipmt-go && gofmt -w .
 
 judge-tools-install: ## Install the Judge trace normalization dependencies
 	@python -m venv .judge-venv
@@ -160,6 +166,9 @@ rust-pty-smoke: build-rust-debug ## Run a real-PTY TUI compression smoke test (P
 	xz -t "$$output"; \
 	rg -q "ZIPMT PIPELINE CONTROLLER" "$$transcript"; \
 	echo "PTY smoke passed: $$transcript"
+
+rust-tui-screenshots: ## Regenerate tested Rust TUI screenshots in docs/assets
+	@python scripts/render_tui_screenshots.py
 
 via_index: ## Build the via index required by the via MCP server
 	@via index "$(CURDIR)"
@@ -299,7 +308,7 @@ else
 #   make tldr V=-vv        stderr + filtered failures to terminal
 #   make tldr V=-vvv       stderr + full stdout to terminal
 
-.PHONY: help chat test test-rust format-rust rust-format-check rust-clippy rust-complexity rust-cyclomatic rust-dead-code rust-quality rust-audit rust-unsafe rust-miri rust-memcheck rust-profile rust-bloat rust-quality-full rust-tools-check rust-tools-install build-rust build-rust-debug via_index install_bob update_bob pull_bob clean_bob diff_bob
+.PHONY: help chat test test-go format-go test-rust format-rust rust-format-check rust-clippy rust-complexity rust-cyclomatic rust-dead-code rust-quality rust-audit rust-unsafe rust-miri rust-memcheck rust-profile rust-bloat rust-quality-full rust-tools-check rust-tools-install build-rust build-rust-debug rust-tui-screenshots via_index install_bob update_bob pull_bob clean_bob diff_bob
 
 install_bob: ## Copy agents into a project and set up skill links (usage: make install_bob TARGET=/path/to/project)
 	@$(MAKE) MKF_ACTIVE=1 install_bob TARGET="$(TARGET)"
@@ -349,6 +358,12 @@ chat: ## Post a message to CHAT.md (usage: make chat MSG="<msg>" [PERSONA="<name
 		$(if $(TO),--to "$(TO)")
 
 test: ## Run unit tests
+	@./agents/tools/mkf.py $(V) $@
+
+test-go: ## Run Go unit tests
+	@./agents/tools/mkf.py $(V) $@ ARGS="$(ARGS)"
+
+format-go: ## Format Go sources
 	@./agents/tools/mkf.py $(V) $@
 
 judge-tools-install: ## Install the Judge trace normalization dependencies
@@ -431,6 +446,9 @@ build-rust-debug: ## Build Rust debug binary for local PTY testing
 
 rust-pty-smoke: ## Run a real-PTY TUI compression smoke test (PTY_COLS/PTY_ROWS optional)
 	@./agents/tools/mkf.py $(V) $@ PTY_COLS="$(PTY_COLS)" PTY_ROWS="$(PTY_ROWS)"
+
+rust-tui-screenshots: ## Regenerate tested Rust TUI screenshots in docs/assets
+	@./agents/tools/mkf.py $(V) $@
 
 via_index: ## Build the via index required by the via MCP server
 	@./agents/tools/mkf.py $(V) $@

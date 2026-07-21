@@ -16,6 +16,12 @@
   draining, ticking, and joining are separate roles; keyboard commands are
   family-dispatched with shared mouse setters; startup resolution, signal
   installation, cleanup, and exit policy are typed services.
+- **Go ZipWriter copy fix (2026-07-21):** `ZipWriter.Write` had reversed Go
+  `copy` arguments, copying zero-filled destination chunks into the caller's
+  input. It now copies input slices into owned chunks. A focused regression
+  locks both input immutability and gzip round-trip output. The remaining Go
+  suite passes when excluding the independent legacy `TestCompressBZ2`; that
+  test currently reports 25 decompressed bytes for a 23-byte fixture.
 
 This file tracks the current state of code implementations and tech stacks maintained by the Software Engineer (Neo).
 

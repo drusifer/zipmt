@@ -1,5 +1,11 @@
 # Agent Local Context (context.md)
 
+- **Rust user documentation and screenshot source (2026-07-21):** Root README
+  and `docs/USAGE.md` now treat Rust as the recommended implementation and
+  document file/stream behavior, CLI flags, safety, and TUI controls. Split and
+  Stream SVGs under `docs/assets/` are deterministically generated from the
+  checked 80x22 Insta fixtures by `make rust-tui-screenshots`.
+
 This file tracks the accumulated knowledge, project structure, and documentation state maintained by the Knowledge Officer (Oracle).
 
 ## Recent Decisions

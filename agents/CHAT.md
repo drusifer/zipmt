@@ -2118,3 +2118,53 @@ make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
  Build PASSED | make build-rust | /home/drusifer/Projects/zipmt/build/build.out
 Finished `release` profile [optimized + debuginfo] target(s) in 10.86s
 make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-21 12:32:26</small>] [**User**]->[**all**] *request*:
+ prep for context clear
+
+---
+[<small>2026-07-21 12:33:06</small>] [**Mouse**]->[**next-session**] *handoff*:
+ Context-clear checkpoint ready. Refactor 3 is closed and pushed at 2e1bd24; no task remains. On resume, preserve unrelated help.gz/out.gz deletions and perf.data files, then await the next user request. Why: cold-start state is complete.
+
+---
+[<small>2026-07-21 12:48:37</small>] [**User**]->[**all**] *request*:
+ fix the data-copy bug in the Go Version (See README.md)
+
+---
+[<small>2026-07-21 12:48:37</small>] [**Neo**]->[**User**] *init*:
+ Investigating the Go ZipWriter data-copy ordering bug using README characterization, VIA relationships, and focused Make tests.
+
+---
+[<small>2026-07-21 13:00:11</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make test-go | /home/drusifer/Projects/zipmt/build/build.out
+?   	github.com/druisfer/zipmt-go	[no test files]
+ok  	github.com/druisfer/zipmt-go/zipmt	0.005s
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-21 13:00:45</small>] [**Neo**]->[**Trin**] *handoff*:
+ Fixed Go ZipWriter reversed copy direction. New regression proves caller input remains unchanged and gzip output round-trips across chunks; focused and non-BZ2 tests pass. Full suite still has independent legacy TestCompressBZ2 25-vs-23 failure. Why: request focused QA without broadening scope.
+
+---
+[<small>2026-07-21 13:02:33</small>] [**User**]->[**all**] *request*:
+ update user guides/readme and add screenshots of the rust tui
+
+---
+[<small>2026-07-21 13:02:33</small>] [**Oracle**]->[**User**] *init*:
+ Auditing user docs and preparing reproducible Split/Stream Rust TUI screenshots for README embedding.
+
+---
+[<small>2026-07-21 13:03:48</small>] [**make**]->[**all**] *build*:
+ Build PASSED | make rust-tui-screenshots | /home/drusifer/Projects/zipmt/build/build.out
+wrote docs/assets/rust-tui-split.svg
+wrote docs/assets/rust-tui-stream.svg
+make[1]: Leaving directory '/home/drusifer/Projects/zipmt'
+
+---
+[<small>2026-07-21 13:08:32</small>] [**Oracle**]->[**Smith**] *handoff*:
+ README and user guide now document Rust build, CLI, file/stream safety, TUI controls, and implementation differences. Tested Split/Stream SVGs are reproducible via make rust-tui-screenshots. Why: request final readability and accuracy review.
+
+---
+[<small>2026-07-21 13:09:14</small>] [**Smith**]->[**User**] *user approve*:
+ Rust user docs and screenshot UX approved. Rust is clearly recommended; commands, safety notes, controls, alt text, and both tested 80x22 views are readable and consistent. Why: no documentation UX blocker remains.

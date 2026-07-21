@@ -1,77 +1,131 @@
-Multi-threaded compression utility implementations in C and Go.
+Parallel compression utilities implemented in Rust, Go, and C.
 
 TLDR:
-    Goal: Provide parallel compression (bzip2, gzip, xz) on multi-core systems.
-    Status: Both C and Go versions evaluated and documented.
-    Action: Caution! C version deletes source files by default, while Go version contains a critical data-copy bug.
+    Goal: Compress files and streams across CPU cores with xz, bzip2, or gzip.
+    Status: The Rust implementation is the recommended, tested CLI with an optional interactive TUI.
+    Action: Build zipmt-rust, then use --no-tui for scripts or -T for the live dashboard.
 
-# zipmt - Multi-threaded Compression Utility
+# zipmt
 
-`zipmt` is a high-performance command-line compression utility. It is implemented in two versions:
-1. **C Implementation (`src/`):** Multi-threaded `bzip2` and `gzip` compression using GLib thread pools and OpenMP.
-2. **Go Implementation (`zipmt-go/`):** Pure in-memory streaming pipeline utilizing goroutines and channels, supporting `xz`, `bz2`, and `gzip` formats.
+`zipmt` is a collection of multi-threaded compression utilities. The Rust
+implementation is the recommended version: it supports file and stream
+pipelines, bounded memory, integrity verification, safe cleanup, and an
+interactive terminal dashboard.
 
-> [!CAUTION]
-> **Important Safety Warnings:**
-> - **C Version:** Automatically deletes the original source file by default upon successful compression. To prevent this, always run with the `-k` / `--keep` flag.
-> - **Go Version:** Contains a critical data-copy ordering bug in `ZipWriter.Write` that corrupts the input buffer and outputs compressed streams of zeros. Do not use the Go implementation in production until this is fixed.
+| Implementation | Formats | Best for | Status |
+|---|---|---|---|
+| [`zipmt-rust/`](zipmt-rust/) | xz, bz2, gz | Current CLI, automation, and interactive monitoring | Recommended |
+| [`zipmt-go/`](zipmt-go/) | xz, bz2, gz | Go pipeline reference | Maintained |
+| [`src/`](src/) | bz2, gz | Original C/OpenMP implementation | Legacy; deletes source files unless `-k` is used |
 
----
+## Rust TUI
 
-## 📖 Documentation Index
+Pass `-T` to monitor compression in a terminal. File input uses the Split
+dashboard; standard input uses the Stream dashboard. Both views expose live
+I/O, process metrics, logs, paging, and runtime controls.
 
-To help you get started and understand the codebase, the following documentation is available:
+### Split mode
 
-- **[User Guide & Compilation](file:///home/drusifer/Projects/zipmt/docs/USAGE.md)**: Setup, build dependencies, command-line arguments, and usage examples.
-- **[Architecture Overview](file:///home/drusifer/Projects/zipmt/docs/ARCH.md)**: System design, thread modes (Split vs. Stream), data structures, pipeline flow, and technical debt.
-- **[Repository Mindmap](file:///home/drusifer/Projects/zipmt/MINDMAP.md)**: Code structure, module indexing, and file responsibilities.
-- **[BobProtocol Agent Directory](file:///home/drusifer/Projects/zipmt/agents/DOCUMENTATION_INDEX.md)**: Index of AI personas, skills, templates, and team state files.
+![Rust TUI Split mode showing slice progress, I/O chart, logs, and controls](docs/assets/rust-tui-split.svg)
 
----
+### Stream mode
 
-## ⚡ Quick Start
+![Rust TUI Stream mode showing workers, I/O chart, queues, logs, and controls](docs/assets/rust-tui-stream.svg)
 
-### 1. Build from Source
-Ensure dependencies (`libglib2.0-dev`, `libbz2-dev`, `zlib1g-dev`) are installed, then compile the utility:
+The images are generated from the same tested 80×22 snapshot fixtures used by
+the Rust test suite:
+
 ```bash
-cd src
-make
+make rust-tui-screenshots
 ```
 
-### 2. Compress a File (Keeping the Original)
+## Quick start
+
+### Build the Rust implementation
+
 ```bash
-./zipmt -k my_large_file.db
+cd zipmt-rust
+cargo build --release
 ```
 
-### 3. Compress a File using 8 Threads (Using Gzip)
+The binary is written to `zipmt-rust/target/release/zipmt-rust`.
+
+### Compress a file
+
 ```bash
-./zipmt -t 8 -z -k my_large_file.db
+# Creates archive.tar.xz and preserves archive.tar
+zipmt-rust/target/release/zipmt-rust archive.tar
+
+# Select gzip, level 6, and four workers
+zipmt-rust/target/release/zipmt-rust -a gz -l 6 -j 4 archive.tar
 ```
 
-### 4. Compress a Stream from stdin to stdout
+### Open the interactive dashboard
+
 ```bash
-tar -cf - ./my_folder | ./zipmt -s -c - > my_folder.tar.bz2
+zipmt-rust/target/release/zipmt-rust -T -o archive.tar.xz archive.tar
 ```
 
----
+The TUI requires a terminal of at least 80 columns by 22 rows. Use
+`--no-tui` for scripts and redirected diagnostics.
 
-## 🛠️ Project Structure
+### Compress a stream
 
+```bash
+tar -cf - ./my-folder \
+  | zipmt-rust/target/release/zipmt-rust --no-tui -a xz -o my-folder.tar.xz -
 ```
-├── README.md               # Project entry point and overview
-├── MINDMAP.md              # Code architecture and file catalog
-├── Makefile                # Top-level makefile for tooling and tests
-├── docs/                   # Global documentation
-│   ├── ARCH.md             # System architecture and thread models
-│   └── USAGE.md            # Installation and usage guide
-├── src/                    # C Source files
-│   ├── Makefile            # C build configuration
-│   └── zipmt.c             # Main source code
-├── zipmt-go/               # Go Source files
-│   ├── main.go             # Go entry point
-│   ├── go.mod / go.sum     # Go dependency definitions
-│   └── zipmt/              # Concurrency workers and compressors
-└── agents/                 # BobProtocol agent ecosystem
-    ├── CHAT.md             # Agent team communication log
-    └── [persona].docs/     # Persona state and instruction folders
+
+### Verify an existing compressed file
+
+```bash
+zipmt-rust/target/release/zipmt-rust --test -a xz archive.tar.xz
+```
+
+## TUI controls
+
+| Key | Action |
+|---|---|
+| `P` | Pause or resume compression |
+| `-` / `+` | Increase or decrease throttle delay |
+| `I` | Toggle rate and cumulative I/O charts |
+| `PgUp` / `PgDn`, mouse wheel | Page through slices or workers |
+| `Tab`, `↑` / `↓` | Select and adjust an available control |
+| `Home` / `End` | Jump to the oldest or newest log messages |
+| `Q` / `Esc` | Abort and clean up an incomplete output; close a completed dashboard |
+| `Enter` | Close a completed dashboard |
+
+Stream mode also supports `[` / `]` for compression level. Controls labeled
+`FIXED` in Split mode cannot change after its encoders are created.
+
+## Safety notes
+
+- Rust and Go preserve the source file unless explicitly told otherwise.
+- Rust `--delete` removes the source only after successful compression.
+- The legacy C implementation deletes its source by default; always pass
+  `-k` / `--keep` when the original must be retained.
+- Partial Rust output files are removed on errors and Ctrl-C.
+
+## Documentation
+
+- [Complete user guide](docs/USAGE.md)
+- [Rust architecture](docs/ARCH_RUST.md)
+- [Project architecture](docs/ARCH.md)
+- [Rust quality tooling](docs/RUST_QUALITY_TOOLING.md)
+- [Repository mind map](MINDMAP.md)
+
+## Repository layout
+
+```text
+├── README.md
+├── docs/
+│   ├── USAGE.md
+│   ├── ARCH_RUST.md
+│   └── assets/                 # Generated Rust TUI screenshots
+├── scripts/
+│   └── render_tui_screenshots.py
+├── zipmt-rust/                 # Recommended Rust implementation
+├── zipmt-go/                   # Go implementation
+├── src/                        # Legacy C implementation
+└── agents/                     # Bob Protocol team state and workflows
 ```

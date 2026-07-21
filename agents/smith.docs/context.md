@@ -3,6 +3,11 @@
 This file tracks the HCI evaluations, gate reviews, and usability criteria maintained by the HCI Expert (Smith).
 
 ## Recent Decisions
+- **Rust documentation visuals approved (2026-07-21):** Root and detailed user
+  guides expose the recommended Rust path, accurate CLI/TUI controls, safety
+  differences, and readable Split/Stream images. The screenshots retain text
+  labels and symbols rather than depending on color, include useful alt text,
+  and derive from the tested 80x22 fixtures.
 - **Rust Refactor 3 UX gate approved (2026-07-20):** The user-approved 80x22
   Split and Stream surfaces remain snapshot-identical. Real PTY restoration,
   paging, keyboard precedence, mouse regions, controls, completion, and
